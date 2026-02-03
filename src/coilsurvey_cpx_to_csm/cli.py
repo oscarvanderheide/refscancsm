@@ -4,21 +4,50 @@ import argparse
 import sys
 import numpy as np
 from pathlib import Path
-from .reader import readCpx
+from .interpolation import interpolate_coil_maps
 
 
 def main():
     """Main CLI entry point for refscan2csm."""
     parser = argparse.ArgumentParser(
         prog="refscan2csm",
-        description="Read and convert CPX files to CSM format",
+        description="Interpolate coil sensitivity maps from reference scan to target scan geometry",
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Basic usage with .npy output
+  refscan2csm refscan.cpx refscan.sin target.sin
+  
+  # Specify output file
+  refscan2csm refscan.cpx refscan.sin target.sin -o coil_maps.npy
+  
+  # Save as MATLAB file
+  refscan2csm refscan.cpx refscan.sin target.sin -o coil_maps.mat --matlab
+  
+  # Use cubic interpolation
+  refscan2csm refscan.cpx refscan.sin target.sin --interp-order 3
+  
+  # Just show information without saving
+  refscan2csm refscan.cpx refscan.sin target.sin --no-save --verbose
+""",
     )
 
     parser.add_argument(
-        "cpx_file",
+        "refscan_cpx",
         type=str,
-        help="Path to the .cpx file to read (with or without .cpx extension)",
+        help="Path to reference scan CPX file (with or without .cpx extension)",
+    )
+    
+    parser.add_argument(
+        "refscan_sin",
+        type=str,
+        help="Path to reference scan SIN file",
+    )
+    
+    parser.add_argument(
+        "target_sin",
+        type=str,
+        help="Path to target scan SIN file",
     )
 
     parser.add_argument(
@@ -26,13 +55,34 @@ def main():
         "--output",
         type=str,
         default=None,
-        help="Output file path for saving data (default: cpx_output.npy)",
+        help="Output file path (default: coil_maps_interpolated.npy)",
+    )
+    
+    parser.add_argument(
+        "--matlab",
+        action="store_true",
+        help="Save output in MATLAB .mat format instead of .npy",
     )
 
     parser.add_argument(
         "--no-save",
         action="store_true",
         help="Don't save output file, just display information",
+    )
+    
+    parser.add_argument(
+        "--location-idx",
+        type=int,
+        default=1,
+        help="Location index to extract from SIN files (default: 1)",
+    )
+    
+    parser.add_argument(
+        "--interp-order",
+        type=int,
+        default=1,
+        choices=[0, 1, 3],
+        help="Interpolation order: 0=nearest, 1=linear (default), 3=cubic",
     )
 
     parser.add_argument(
@@ -44,37 +94,37 @@ def main():
 
     args = parser.parse_args()
 
-    # Process the CPX file
-    cpx_file = args.cpx_file
-
+    # Process file paths
+    refscan_cpx = args.refscan_cpx
+    
     # Remove .cpx extension if provided (readCpx adds it automatically)
-    if cpx_file.endswith(".cpx") or cpx_file.endswith(".CPX"):
-        cpx_file = cpx_file[:-4]
-
-    print(f"\n{'=' * 70}")
-    print(f"Reading: {cpx_file}.cpx")
-    print("=" * 70)
+    if refscan_cpx.endswith(".cpx") or refscan_cpx.endswith(".CPX"):
+        refscan_cpx = refscan_cpx[:-4]
 
     try:
-        data, hdr, labels = readCpx(cpx_file)
+        coil_maps, metadata = interpolate_coil_maps(
+            refscan_cpx,
+            args.refscan_sin,
+            args.target_sin,
+            location_idx=args.location_idx,
+            interpolation_order=args.interp_order,
+        )
     except Exception as e:
-        print(f"Error reading CPX file: {e}", file=sys.stderr)
+        print(f"\n✗ Error during interpolation: {e}", file=sys.stderr)
+        import traceback
+        if args.verbose:
+            traceback.print_exc()
         sys.exit(1)
 
-    print("\n✓ Successfully read CPX file")
-    print(f"  Shape: {data.shape}")
-    print(f"  Labels: {labels}")
-    print(f"  Data type: {data.dtype}")
-
+    # Display summary
     if args.verbose:
-        print("\nDetailed information:")
-        print(f"  Number of channels: {data.shape[0]}")
-        if len(data.shape) > 1:
-            print(f"  Dimensions: {' × '.join(map(str, data.shape))}")
-        print(
-            f"  Number of headers: {len([k for k in hdr.keys() if k.startswith('hdr_')])}"
-        )
-        print(f"  Header type: {hdr.get('headerType', 'unknown')}")
+        print("Detailed Metadata:")
+        print(f"  Number of coils: {metadata['ncoils']}")
+        print(f"  Reference shape: {metadata['reference_shape']}")
+        print(f"  Reference voxel sizes: {metadata['reference_voxel_sizes']} mm")
+        print(f"  Target shape: {metadata['target_shape']}")
+        print(f"  Target voxel sizes: {metadata['target_voxel_sizes']} mm")
+        print(f"  Interpolation order: {metadata['interpolation_order']}")
 
     # Save data if requested
     if not args.no_save:
@@ -82,12 +132,44 @@ def main():
             output_file = args.output
         else:
             # Default output name
-            input_path = Path(cpx_file)
-            output_file = input_path.stem + "_output.npy"
+            if args.matlab:
+                output_file = "coil_maps_interpolated.mat"
+            else:
+                output_file = "coil_maps_interpolated.npy"
 
         try:
-            np.save(output_file, data)
-            print(f"\n✓ Data saved to: {output_file}")
+            if args.matlab or output_file.endswith('.mat'):
+                # Save as MATLAB file
+                try:
+                    from scipy.io import savemat
+                except ImportError:
+                    print("\n✗ Error: scipy.io not available for MATLAB output", file=sys.stderr)
+                    print("   Install with: uv pip install scipy", file=sys.stderr)
+                    sys.exit(1)
+                
+                # Prepare data for MATLAB (transpose to match MATLAB convention if needed)
+                mat_data = {
+                    'coil_maps': coil_maps,
+                    'metadata': {
+                        'ncoils': metadata['ncoils'],
+                        'target_shape': metadata['target_shape'],
+                        'target_voxel_sizes': metadata['target_voxel_sizes'],
+                        'reference_shape': metadata['reference_shape'],
+                        'reference_voxel_sizes': metadata['reference_voxel_sizes'],
+                    }
+                }
+                savemat(output_file, mat_data)
+                print(f"\n✓ Coil maps saved to MATLAB file: {output_file}")
+            else:
+                # Save as numpy file
+                np.save(output_file, coil_maps)
+                print(f"\n✓ Coil maps saved to: {output_file}")
+                
+                # Also save metadata
+                metadata_file = Path(output_file).stem + "_metadata.npy"
+                np.save(metadata_file, metadata, allow_pickle=True)
+                print(f"✓ Metadata saved to: {metadata_file}")
+                
         except Exception as e:
             print(f"\n✗ Error saving data: {e}", file=sys.stderr)
             sys.exit(1)

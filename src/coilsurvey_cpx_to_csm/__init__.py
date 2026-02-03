@@ -16,6 +16,11 @@ from .reader import (
     transform_to_MPS_target,
 )
 
+from .interpolation import (
+    interpolate_coil_maps,
+    create_mps_matrix,
+)
+
 __version__ = "0.1.0"
 
 __all__ = [
@@ -27,4 +32,6 @@ __all__ = [
     "read_matrix_size",
     "transform_to_MPS_refscan",
     "transform_to_MPS_target",
+    "interpolate_coil_maps",
+    "create_mps_matrix",
 ]
