@@ -5,33 +5,35 @@ coil survey data to CSM format, along with functions for reading location
 matrices and transforming coordinate systems.
 """
 
-from .reader import (
-    readCpx,
-    oset,
-    filename_extcase,
+# CPX file reading
+from .read_cpx import read_cpx
+
+# SIN file reading
+from .read_sin import (
     read_location_matrix,
     read_voxel_sizes,
     read_matrix_size,
-    transform_to_MPS_refscan,
-    transform_to_MPS_target,
 )
 
-from .interpolation import (
-    interpolate_coil_maps,
+# Coordinate transformations
+from .transforms import (
+    transform_to_MPS_refscan,
+    transform_to_MPS_target,
     create_mps_matrix,
 )
+
+# Main workflow
+from .workflow import get_csm
 
 __version__ = "0.1.0"
 
 __all__ = [
-    "readCpx",
-    "oset",
-    "filename_extcase",
+    "read_cpx",
     "read_location_matrix",
     "read_voxel_sizes",
     "read_matrix_size",
     "transform_to_MPS_refscan",
     "transform_to_MPS_target",
-    "interpolate_coil_maps",
     "create_mps_matrix",
+    "get_csm",
 ]

@@ -4,7 +4,7 @@ import argparse
 import sys
 import numpy as np
 from pathlib import Path
-from .interpolation import interpolate_coil_maps
+from .workflow import get_csm
 
 
 def main():
@@ -102,7 +102,7 @@ Examples:
         refscan_cpx = refscan_cpx[:-4]
 
     try:
-        coil_maps, metadata = interpolate_coil_maps(
+        coil_maps, metadata = get_csm(
             refscan_cpx,
             args.refscan_sin,
             args.target_sin,

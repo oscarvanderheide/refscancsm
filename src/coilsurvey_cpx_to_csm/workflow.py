@@ -1,50 +1,22 @@
-"""Coil sensitivity map interpolation to target geometry."""
+"""Main workflow for generating coil sensitivity maps in target geometry."""
 
 import numpy as np
-from scipy.interpolate import RegularGridInterpolator
 from scipy.ndimage import map_coordinates
 
-from .reader import (
-    readCpx,
+from .read_cpx import read_cpx
+from .read_sin import (
     read_location_matrix,
     read_voxel_sizes,
     read_matrix_size,
+)
+from .transforms import (
     transform_to_MPS_refscan,
     transform_to_MPS_target,
+    create_mps_matrix,
 )
 
 
-def create_mps_matrix(matrix_size, voxel_sizes):
-    """
-    Create MPS coordinate system matrix for index to mm conversion.
-    
-    Parameters:
-    -----------
-    matrix_size : numpy.ndarray
-        Array size [nx, ny, nz]
-    voxel_sizes : numpy.ndarray
-        Voxel dimensions [dx, dy, dz] in mm
-    
-    Returns:
-    --------
-    numpy.ndarray
-        4x4 transformation matrix from indices to mm coordinates
-    """
-    # Create diagonal matrix with voxel sizes
-    T = np.eye(4)
-    T[0, 0] = voxel_sizes[0]
-    T[1, 1] = voxel_sizes[1]
-    T[2, 2] = voxel_sizes[2]
-    
-    # Add centering offset (MATLAB convention: -(size/2 + 0.5))
-    T[0, 3] = -(matrix_size[0] / 2 + 0.5) * voxel_sizes[0]
-    T[1, 3] = -(matrix_size[1] / 2 + 0.5) * voxel_sizes[1]
-    T[2, 3] = -(matrix_size[2] / 2 + 0.5) * voxel_sizes[2]
-    
-    return T
-
-
-def interpolate_coil_maps(
+def get_csm(
     refscan_cpx_path,
     refscan_sin_path,
     target_sin_path,
@@ -52,12 +24,13 @@ def interpolate_coil_maps(
     interpolation_order=1,
 ):
     """
-    Interpolate coil sensitivity maps from reference scan to target scan geometry.
+    Get coil sensitivity maps interpolated to target scan geometry.
     
-    This function implements the complete workflow:
+    This is the main function that orchestrates the complete workflow:
     1. Load reference coil maps from CPX file
     2. Read geometry information from SIN files
     3. Create transformation matrices
+    4. Interpolate coil maps onto target geometry
     4. Interpolate coil maps onto target geometry
     
     Parameters:
@@ -88,7 +61,7 @@ def interpolate_coil_maps(
     # Step 1: Load reference coil maps from CPX file
     print("\n[1/5] Loading reference coil maps from CPX file...")
     print(f"      File: {refscan_cpx_path}.cpx")
-    ref_data, ref_hdr, ref_labels = readCpx(refscan_cpx_path)
+    ref_data, ref_hdr, ref_labels = read_cpx(refscan_cpx_path)
     print(f"      ✓ Loaded shape: {ref_data.shape}")
     print(f"      ✓ Data labels: {ref_labels}")
     

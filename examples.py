@@ -9,8 +9,8 @@ This script demonstrates how to:
 
 import numpy as np
 from coilsurvey_cpx_to_csm import (
-    interpolate_coil_maps,
-    readCpx,
+    get_csm,
+    read_cpx,
     read_location_matrix,
     read_voxel_sizes,
     read_matrix_size,
@@ -26,7 +26,7 @@ def example_full_workflow():
     print("="*70 + "\n")
     
     # Interpolate coil sensitivity maps from reference to target geometry
-    coil_maps, metadata = interpolate_coil_maps(
+    coil_maps, metadata = get_csm(
         refscan_cpx_path="path/to/refscan",  # without .cpx extension
         refscan_sin_path="path/to/refscan.sin",
         target_sin_path="path/to/target.sin",
@@ -68,7 +68,7 @@ def example_read_individual_files():
     
     # Read CPX file
     print("1. Reading CPX file...")
-    data, hdr, labels = readCpx("path/to/refscan")
+    data, hdr, labels = read_cpx("path/to/refscan")
     print(f"   CPX data shape: {data.shape}")
     print(f"   Data labels: {labels}")
     
@@ -98,7 +98,7 @@ def example_different_interpolation_orders():
     for order, name in [(0, "nearest"), (1, "linear"), (3, "cubic")]:
         print(f"\nInterpolation order {order} ({name}):")
         
-        coil_maps, metadata = interpolate_coil_maps(
+        coil_maps, metadata = get_csm(
             refscan_cpx_path="path/to/refscan",
             refscan_sin_path="path/to/refscan.sin",
             target_sin_path="path/to/target.sin",
