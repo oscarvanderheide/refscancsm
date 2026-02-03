@@ -1,9 +1,35 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "coilsurvey-cpx-to-csm"
 version = "0.1.0"
-description = "Add your description here"
+description = "Tool for reading CPX files and converting coil survey data to CSM format"
 readme = "README.md"
 requires-python = ">=3.12"
+authors = [
+    { name = "Your Name", email = "your.email@example.com" }
+]
+license = { text = "MIT" }
+keywords = ["cpx", "csm", "coil-survey", "mri", "medical-imaging"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+]
+
 dependencies = [
     "numpy>=2.4.1",
 ]
+
+[project.scripts]
+refscan2csm = "coilsurvey_cpx_to_csm.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/yourusername/coilsurvey-cpx-to-csm"
+Repository = "https://github.com/yourusername/coilsurvey-cpx-to-csm"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/coilsurvey_cpx_to_csm"]
