@@ -8,21 +8,15 @@ from .get_csm import get_csm
 
 
 def main():
-    """Main CLI entry point for refscancsm."""
+    """Main CLI entry point for get_csm."""
     parser = argparse.ArgumentParser(
-        prog="refscancsm",
+        prog="get_csm",
         description="Interpolate coil sensitivity maps from reference scan to target scan geometry",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
+Example:
   # Basic usage with .npy output
-  refscancsm refscan.cpx refscan.sin target.sin -o coil_maps.npy
-  
-  # With detailed output information
-  refscancsm refscan.cpx refscan.sin target.sin -o coil_maps.npy -v
-  
-  # Use cubic interpolation
-  refscancsm refscan.cpx refscan.sin target.sin -o coil_maps.npy --interp-order 3
+  get_csm refscan.cpx refscan.sin target.sin -o csm.npy
 """,
     )
 
