@@ -125,13 +125,13 @@ def _interpolate_csm_to_target_geometry(
     
     ncoils = source_csm.shape[0]
     target_shape_tuple = tuple(target_shape.astype(int))
-    nx_t, ny_t, nz_t = target_shape_tuple
+    nx, ny, nz = target_shape_tuple
     
     vprint(f"      Target shape: {target_shape_tuple}")
     vprint(f"      Interpolation: {['nearest', 'linear', '', 'cubic'][interpolation_order]}")
     
     target_coords = np.stack(
-        np.meshgrid(np.arange(nx_t), np.arange(ny_t), np.arange(nz_t), indexing="ij"), 
+        np.meshgrid(np.arange(nx), np.arange(ny), np.arange(nz), indexing="ij"), 
         axis=-1
     )
     target_coords_homogeneous = np.ones((*target_coords.shape[:-1], 4))
@@ -141,7 +141,7 @@ def _interpolate_csm_to_target_geometry(
     source_coords_flat = (target_to_source_transform @ target_coords_homogeneous.reshape(-1, 4).T).T
     source_coords = source_coords_flat[:, :3].reshape(*target_shape_tuple, 3)
     
-    target_csm = np.zeros((ncoils, nz_t, ny_t, nx_t), dtype=np.complex64)
+    target_csm = np.zeros((ncoils, nz, ny, nx), dtype=np.complex64)
     
     for coil_idx in range(ncoils):
         if (coil_idx + 1) % 10 == 0 or coil_idx == 0 or coil_idx == ncoils - 1:
@@ -159,7 +159,7 @@ def _interpolate_csm_to_target_geometry(
             order=interpolation_order,
             mode="constant",
             cval=0.0,
-        ).reshape(nx_t, ny_t, nz_t)
+        ).reshape(nx, ny, nz)
         
         imag_part = map_coordinates(
             source_csm[coil_idx, ...].imag,
@@ -167,7 +167,7 @@ def _interpolate_csm_to_target_geometry(
             order=interpolation_order,
             mode="constant",
             cval=0.0,
-        ).reshape(nx_t, ny_t, nz_t)
+        ).reshape(nx, ny, nz)
         
         target_csm[coil_idx, ...] = (real_part + 1j * imag_part).transpose(2, 1, 0)
     
