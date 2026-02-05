@@ -4,7 +4,7 @@ import argparse
 import sys
 import numpy as np
 from pathlib import Path
-from .workflow import get_csm
+from .get_csm import get_csm
 
 
 def main():

@@ -26,7 +26,7 @@ dependencies = [
 ]
 
 [project.scripts]
-refscan2csm = "refscancsm.cli:main"
+get_csm = "refscancsm.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/yourusername/refscancsm"

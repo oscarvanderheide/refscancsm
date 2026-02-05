@@ -17,7 +17,7 @@ from .parse_sin import (
 )
 
 # Main workflow
-from .workflow import get_csm
+from .get_csm import get_csm
 
 __version__ = "0.1.0"
 
