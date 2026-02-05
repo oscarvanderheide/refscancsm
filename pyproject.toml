@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "coilsurvey-cpx-to-csm"
+name = "refscancsm"
 version = "0.1.0"
 description = "Tool for reading CPX files and converting coil survey data to CSM format"
 readme = "README.md"
@@ -26,11 +26,11 @@ dependencies = [
 ]
 
 [project.scripts]
-refscan2csm = "coilsurvey_cpx_to_csm.cli:main"
+refscan2csm = "refscancsm.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/yourusername/coilsurvey-cpx-to-csm"
-Repository = "https://github.com/yourusername/coilsurvey-cpx-to-csm"
+Homepage = "https://github.com/yourusername/refscancsm"
+Repository = "https://github.com/yourusername/refscancsm"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/coilsurvey_cpx_to_csm"]
+packages = ["src/refscancsm"]

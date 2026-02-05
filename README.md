@@ -1,4 +1,4 @@
-# Coilsurvey CPX to CSM
+# RefScanCSM
 
 A Python package for reading CPX files from a Philips SENSE refscan and interpolating coil sensitivity maps onto target scan geometries. This tool provides both a command-line interface and a Python library for working with MRI coil survey data.
 
@@ -20,24 +20,24 @@ A Python package for reading CPX files from a Philips SENSE refscan and interpol
 
 ```bash
 # Install with uv
-uv add git+https://github.com/yourusername/coilsurvey-cpx-to-csm.git
+uv add git+https://github.com/yourusername/refscancsm.git
 
 # Or using pip
-pip install git+https://github.com/yourusername/coilsurvey-cpx-to-csm.git
+pip install git+https://github.com/yourusername/refscancsm.git
 ```
 
 ### Direct usage with uvx (no installation needed)
 
 ```bash
-uvx --from git+https://github.com/yourusername/coilsurvey-cpx-to-csm.git refscan2csm <file.cpx>
+uvx --from git+https://github.com/yourusername/refscancsm.git refscan2csm <file.cpx>
 ```
 
 ### Local development installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/coilsurvey-cpx-to-csm.git
-cd coilsurvey-cpx-to-csm
+git clone https://github.com/yourusername/refscancsm.git
+cd refscancsm
 
 # Install in editable mode
 uv pip install -e .
@@ -87,7 +87,7 @@ refscan2csm --help
 **Full workflow: Interpolate coil maps to target geometry**
 
 ```python
-from coilsurvey_cpx_to_csm import interpolate_coil_maps
+from refscancsm import interpolate_coil_maps
 import numpy as np
 
 # Interpolate coil sensitivity maps from reference to target geometry
@@ -110,7 +110,7 @@ np.save("coil_maps.npy", coil_maps)
 **Lower-level API: Read individual files**
 
 ```python
-from coilsurvey_cpx_to_csm import readCpx, read_location_matrix, transform_to_MPS_refscan
+from refscancsm import readCpx, read_location_matrix, get_affine_matrix_source
 import numpy as np
 
 # Read a CPX file
@@ -123,11 +123,11 @@ matrix = read_location_matrix("path/to/file.sin", location_idx=1)
 print(f"Location matrix:\n{matrix}")
 
 # Transform to MPS coordinate system
-T_MPS = transform_to_MPS_refscan(matrix)
+T_MPS = get_affine_matrix_source(matrix)
 print(f"Transformation matrix:\n{T_MPS}")
 
 # Read voxel sizes and matrix dimensions
-from coilsurvey_cpx_to_csm import read_voxel_sizes, read_matrix_size
+from refscancsm import read_voxel_sizes, read_matrix_size
 
 voxel_sizes = read_voxel_sizes("path/to/file.sin")
 matrix_size = read_matrix_size("path/to/file.sin")
@@ -170,10 +170,10 @@ matrix_size = read_matrix_size("path/to/file.sin")
 
 ### Transformation Functions
 
-- **`transform_to_MPS_refscan(matrix)`**: Transform refscan location matrix to 4x4 MPS
+- **`get_affine_matrix_source(matrix)`**: Transform refscan location matrix to 4x4 MPS
   coordinate system
 
-- **`transform_to_MPS_target(matrix)`**: Transform target scan location matrix to 4x4 MPS
+- **`get_affine_matrix_target(matrix)`**: Transform target scan location matrix to 4x4 MPS
   coordinate system
 
 ## File Format Support
