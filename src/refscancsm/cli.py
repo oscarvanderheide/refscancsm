@@ -104,7 +104,7 @@ Examples:
     if args.output:
         output_file = args.output
     else:
-        output_file = "coil_maps_interpolated.npy"
+        output_file = "csm.npy"
 
     # Save data
     try:
@@ -114,28 +114,28 @@ Examples:
                 from scipy.io import savemat
             except ImportError:
                 print(
-                    "\n✗ Error: scipy.io not available for MATLAB output",
+                    "\nError: scipy.io not available for MATLAB output",
                     file=sys.stderr,
                 )
                 print("   Install with: uv pip install scipy", file=sys.stderr)
                 sys.exit(1)
 
-            mat_data = {"coil_maps": coil_maps}
+            mat_data = {"csm": coil_maps}
             savemat(output_file, mat_data)
-            print(f"\n✓ Coil maps saved to MATLAB file: {output_file}")
+            print(f"\nCoil maps saved to MATLAB file: {output_file}")
         elif output_file.endswith(".npy"):
             # Save as numpy file
             np.save(output_file, coil_maps)
-            print(f"\n✓ Coil maps saved to: {output_file}")
+            print(f"\nCoil maps saved to: {output_file}")
         else:
             print(
-                f"\n✗ Error: Unsupported output format. Use .npy or .mat extension.",
+                f"\nError: Unsupported output format. Use .npy or .mat extension.",
                 file=sys.stderr,
             )
             sys.exit(1)
 
     except Exception as e:
-        print(f"\n✗ Error saving data: {e}", file=sys.stderr)
+        print(f"\nError saving data: {e}", file=sys.stderr)
         sys.exit(1)
 
     print()
