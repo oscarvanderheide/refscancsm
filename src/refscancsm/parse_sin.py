@@ -3,6 +3,7 @@
 import numpy as np
 import re
 
+
 def get_mps_to_xyz_transform(
     sin_file_path: str, scan_type: str, location_idx: int = 1
 ) -> np.ndarray:
@@ -19,18 +20,16 @@ def get_mps_to_xyz_transform(
     linear_part = _get_mps_to_xyz_linear_part(sin_file_path, location_idx)
 
     if scan_type == "source":
-
         translation = translation[[2, 0, 1]]
         linear_part = linear_part[:, [2, 0, 1]]
         linear_part[0, :] *= -1
 
     elif scan_type == "target":
-
         linear_part[0, :] *= -1
         linear_part[1, :] *= -1
         translation[2] *= -1
-    
-    # Build 4x4 matrix: 
+
+    # Build 4x4 matrix:
     # [ rotation | translation]
     # [  0 0 0   |      1     ]
     mps_to_xyz = np.eye(4)
@@ -39,20 +38,20 @@ def get_mps_to_xyz_transform(
 
     return mps_to_xyz
 
-def get_idx_to_mps_transform(sin_file_path: str
-) -> np.ndarray:
+
+def get_idx_to_mps_transform(sin_file_path: str) -> np.ndarray:
     """
     Create 4x4 matrix that converts array indices (augmented with a 1) to coordinates in the
     MPS (Measurement, Phase, Slice) system of the scan.
-    
+
     This matrix scales by voxel size and centers the coordinate system at the volume's
     isocenter.
-    
+
     Parameters
     ----------
     sin_file_path : str
         Path to the .sin file
-    
+
     Returns
     -------
     np.ndarray
@@ -68,13 +67,13 @@ def get_idx_to_mps_transform(sin_file_path: str
     idx_to_mps[0, 0] = voxel_sizes[0]
     idx_to_mps[1, 1] = voxel_sizes[1]
     idx_to_mps[2, 2] = voxel_sizes[2]
-    
+
     # Add centering offset to place origin at isocenter
     # Convention: -(size/2 + 0.5) to match Philips/MATLAB indexing
     idx_to_mps[0, 3] = -(matrix_size[0] / 2 + 0.5) * voxel_sizes[0]
     idx_to_mps[1, 3] = -(matrix_size[1] / 2 + 0.5) * voxel_sizes[1]
     idx_to_mps[2, 3] = -(matrix_size[2] / 2 + 0.5) * voxel_sizes[2]
-    
+
     return idx_to_mps
 
 
@@ -129,9 +128,7 @@ def get_matrix_size(sin_file_path: str) -> np.ndarray:
     raise ValueError("Could not find scan_resolutions in file")
 
 
-def _get_mps_to_xyz_linear_part(
-    sin_file_path: str, location_idx: int
-) -> np.ndarray:
+def _get_mps_to_xyz_linear_part(sin_file_path: str, location_idx: int) -> np.ndarray:
     """
     Parse .sin file to extract the linear transformation part (scaling/rotation) of the
     affine transformation matrix that is used to map array indices to world coordinates.
@@ -148,7 +145,7 @@ def _get_mps_to_xyz_linear_part(
     linear_transformation : np.ndarray
         3x3 matrix representing linear transformation of the affine matrix
     """
-    
+
     linear_transformation = []
     # Patterns to match location data in .sin file
     patterns = [
@@ -204,7 +201,6 @@ def _get_mps_to_xyz_translation_part(
                 if len(values) == 3:
                     translation = np.array([float(v) for v in values])
 
-
     # Validate that we found all required data
     if translation is None:
         raise ValueError(
@@ -212,3 +208,4 @@ def _get_mps_to_xyz_translation_part(
         )
 
     return translation
+
