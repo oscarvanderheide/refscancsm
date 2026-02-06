@@ -293,6 +293,12 @@ def read_cpx(filepath: str) -> Tuple[np.ndarray, Dict, np.ndarray]:
                     :img_nx,
                 ] = complex_data
 
+            # Reverse x, y, and z (slice) dimensions for coordinate system compatibility
+            # x: last dimension (axis -1)
+            # y: second-to-last dimension (axis -2)
+            # z: slice dimension (axis 7)
+            data = data[:, :, :, :, :, :, :, ::-1, ::-1, ::-1]
+
             # Create labels for dimensions that are actually used (size > 1)
             dimension_names = np.array(
                 ["chan", "mix", "dyn", "card", "echo", "row", "loc", "slice", "y", "x"]
