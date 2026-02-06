@@ -43,7 +43,7 @@ Example:
         "--output",
         type=str,
         default=None,
-        help="Output file path (default: coil_maps_interpolated.npy)",
+        help="Output file path (default: csm.npy)",
     )
 
     parser.add_argument(

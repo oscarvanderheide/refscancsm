@@ -10,7 +10,7 @@ A Python package for reading CPX files from a Philips SENSE refscan and interpol
 - Read voxel sizes and matrix dimensions
 - **Interpolate coil sensitivity maps from reference to target geometry**
 - Handle different scan planning (rotation, translation, voxel sizes)
-- Command-line tool (`refscan2csm`) for easy coil map interpolation
+- Command-line tool (`get_csm`) for easy coil map interpolation
 - Python API for programmatic access
 - Output to NumPy (.npy) or MATLAB (.mat) formats
 
@@ -29,7 +29,7 @@ pip install git+https://github.com/yourusername/refscancsm.git
 ### Direct usage with uvx (no installation needed)
 
 ```bash
-uvx --from git+https://github.com/yourusername/refscancsm.git refscan2csm <file.cpx>
+uvx --from git+https://github.com/yourusername/refscancsm.git get_csm <file.cpx>
 ```
 
 ### Local development installation
@@ -51,22 +51,22 @@ uv pip install -e .
 
 ```bash
 # Basic usage - interpolate and save to .npy
-refscan2csm refscan.cpx refscan.sin target.sin
+get_csm refscan.cpx refscan.sin target.sin
 
 # Specify output file
-refscan2csm refscan.cpx refscan.sin target.sin -o my_coil_maps.npy
+get_csm refscan.cpx refscan.sin target.sin -o my_coil_maps.npy
 
 # Save as MATLAB file
-refscan2csm refscan.cpx refscan.sin target.sin -o coil_maps.mat --matlab
+get_csm refscan.cpx refscan.sin target.sin -o coil_maps.mat
 
 # Use cubic interpolation (default is linear)
-refscan2csm refscan.cpx refscan.sin target.sin --interp-order 3
+get_csm refscan.cpx refscan.sin target.sin --interp-order 3
 
-# Show detailed information without saving
-refscan2csm refscan.cpx refscan.sin target.sin --no-save --verbose
+# Show detailed information
+get_csm refscan.cpx refscan.sin target.sin --verbose
 
 # Get help
-refscan2csm --help
+get_csm --help
 ```
 
 **Arguments:**
@@ -75,11 +75,9 @@ refscan2csm --help
 - `target_sin`: Path to target scan SIN file (target geometry)
 
 **Options:**
-- `-o, --output`: Output file path (default: coil_maps_interpolated.npy)
-- `--matlab`: Save in MATLAB .mat format
+- `-o, --output`: Output file path (default: csm.npy)
 - `--interp-order {0,1,3}`: Interpolation order (0=nearest, 1=linear, 3=cubic)
 - `--location-idx`: Location index from SIN files (default: 1)
-- `--no-save`: Don't save output, just show info
 - `-v, --verbose`: Show detailed information
 
 ### Python API
@@ -87,21 +85,21 @@ refscan2csm --help
 **Full workflow: Interpolate coil maps to target geometry**
 
 ```python
-from refscancsm import interpolate_coil_maps
+from refscancsm import get_csm
 import numpy as np
 
 # Interpolate coil sensitivity maps from reference to target geometry
-coil_maps, metadata = interpolate_coil_maps(
+coil_maps = get_csm(
     refscan_cpx_path="path/to/refscan",  # without .cpx extension
-    refscan_sin_path="path/to/refscan.sin",
-    target_sin_path="path/to/target.sin",
+    sin_path_refscan="path/to/refscan.sin",
+    sin_path_target="path/to/target.sin",
     location_idx=1,
     interpolation_order=1,  # 0=nearest, 1=linear, 3=cubic
+    verbose=True,
 )
 
 print(f"Interpolated coil maps shape: {coil_maps.shape}")  # [ncoils, nz, ny, nx]
-print(f"Number of coils: {metadata['ncoils']}")
-print(f"Target voxel sizes: {metadata['target_voxel_sizes']} mm")
+print(f"Number of coils: {coil_maps.shape[0]}")
 
 # Save the result
 np.save("coil_maps.npy", coil_maps)
@@ -110,71 +108,61 @@ np.save("coil_maps.npy", coil_maps)
 **Lower-level API: Read individual files**
 
 ```python
-from refscancsm import readCpx, read_location_matrix, get_affine_matrix_source
+from refscancsm import read_cpx, get_voxel_sizes, get_matrix_size
+from refscancsm import get_mps_to_xyz_transform, get_idx_to_mps_transform
 import numpy as np
 
 # Read a CPX file
-data, hdr, labels = readCpx("path/to/file")
+data, hdr, labels = read_cpx("path/to/file")
 print(f"Data shape: {data.shape}")
 print(f"Labels: {labels}")
 
-# Read location matrix from SIN file
-matrix = read_location_matrix("path/to/file.sin", location_idx=1)
-print(f"Location matrix:\n{matrix}")
+# Read voxel sizes and matrix dimensions from SIN file
+voxel_sizes = get_voxel_sizes("path/to/file.sin")
+matrix_size = get_matrix_size("path/to/file.sin")
+print(f"Voxel sizes: {voxel_sizes} mm")
+print(f"Matrix size: {matrix_size}")
 
-# Transform to MPS coordinate system
-T_MPS = get_affine_matrix_source(matrix)
-print(f"Transformation matrix:\n{T_MPS}")
-
-# Read voxel sizes and matrix dimensions
-from refscancsm import read_voxel_sizes, read_matrix_size
-
-voxel_sizes = read_voxel_sizes("path/to/file.sin")
-matrix_size = read_matrix_size("path/to/file.sin")
+# Get transformation matrices
+idx_to_mps = get_idx_to_mps_transform("path/to/file.sin")
+mps_to_xyz = get_mps_to_xyz_transform("path/to/file.sin", "source", location_idx=1)
+idx_to_xyz = mps_to_xyz @ idx_to_mps
+print(f"Index to world transformation:\n{idx_to_xyz}")
 ```
 
 ## API Reference
 
 ### Main Interpolation Function
 
-- **`interpolate_coil_maps(refscan_cpx_path, refscan_sin_path, target_sin_path, location_idx=1, interpolation_order=1)`**
+- **`get_csm(refscan_cpx_path, sin_path_refscan, sin_path_target, location_idx=1, interpolation_order=1, verbose=True)`**
   - Complete workflow to interpolate coil maps from reference to target geometry
-  - Returns: `(interpolated_coil_maps, metadata)` tuple
-  - `interpolated_coil_maps`: numpy array [ncoils, nz, ny, nx] in target geometry
-  - `metadata`: dict with geometry information
+  - Returns: numpy array [ncoils, nz, ny, nx] in target geometry
 
 ### CPX Reading Functions
 
-- **`readCpx(filename)`**: Read and parse a CPX file
+- **`read_cpx(filepath)`**: Read and parse a CPX file
   - Returns: `(data, hdr, data_labels)` tuple
   - `data`: numpy array with shape `[nchan, nmix, ndyn, ncard, necho, nrow, nloc, nslice,
     ny, nx]`
   - `hdr`: Dictionary containing header information
   - `data_labels`: Array of dimension labels
 
-- **`oset(seq)`**: Order-preserving unique set function
-
-- **`filename_extcase(fn)`**: Find correct case-sensitive filename
-
 ### SIN File Reading Functions
 
-- **`read_location_matrix(sin_file_path, location_idx=1)`**: Extract location coordinates
-  and matrices
-  - Returns: 4x3 numpy array
+- **`get_voxel_sizes(sin_file_path)`**: Extract voxel sizes
+  - Returns: 1D array `[x, y, z]` in mm
 
-- **`read_voxel_sizes(sin_file_path)`**: Extract voxel sizes
-  - Returns: 1D array `[x, y, z]`
-
-- **`read_matrix_size(sin_file_path)`**: Extract matrix dimensions
+- **`get_matrix_size(sin_file_path)`**: Extract matrix dimensions
   - Returns: 1D array `[x, y, z]`
 
 ### Transformation Functions
 
-- **`get_affine_matrix_source(matrix)`**: Transform refscan location matrix to 4x4 MPS
-  coordinate system
+- **`get_idx_to_mps_transform(sin_file_path)`**: Create 4x4 matrix that converts array indices to MPS coordinates
+  - Returns: 4x4 transformation matrix
 
-- **`get_affine_matrix_target(matrix)`**: Transform target scan location matrix to 4x4 MPS
-  coordinate system
+- **`get_mps_to_xyz_transform(sin_file_path, scan_type, location_idx=1)`**: Get transformation from MPS to world coordinates
+  - `scan_type`: Either "source" or "target"
+  - Returns: 4x4 transformation matrix
 
 ## File Format Support
 
@@ -208,7 +196,7 @@ The coordinate transformation accounts for:
 uv sync
 
 # Run the CLI locally
-uv run refscan2csm path/to/file.cpx
+uv run get_csm refscan.cpx refscan.sin target.sin
 ```
 
 ## License
@@ -217,7 +205,7 @@ MIT License
 
 ## Notes
 
-The code is functional but may benefit from future cleanup, especially the `readCpx`
+The code is functional but may benefit from future cleanup, especially the `read_cpx`
 function. Contributions welcome!
 
 # Philips MRI Coil Sensitivity Map Extraction from CPX Files
