@@ -31,6 +31,11 @@ Key Header Fields (h1):
 - h1[12]: Matrix data blocks
 - h1[13]: Compression factor (1, 2, or 4)
 
+Scaling Factors:
+- factor[0]: Multiplicative scaling factor
+- factor[1]: Additive scaling offset
+- Applied to compressed data: data = factor[1] + factor[0] * data
+
 Key Header Fields (h2):
 - h2[1] (index 18): Coil number
 - h2[25] (index 42): Data offset (primary)
@@ -38,9 +43,10 @@ Key Header Fields (h2):
 Data Storage:
 - Each image is stored as interleaved real/imaginary pairs
 - Data type depends on compression factor:
-  - Factor 1: float32 (no compression)
-  - Factor 2: int16 (2x compression)
-  - Factor 4: int8 (4x compression)
+  - Factor 1: float32 (no compression, no scaling)
+  - Factor 2: int16 (2x compression, requires scaling)
+  - Factor 4: int8 (4x compression, requires scaling)
+- Compressed data must be scaled: data = factor[1] + factor[0] * data
 - Data is reshaped to [ny, nx, 2] where last dimension is [real, imag]
 """
 
@@ -237,6 +243,10 @@ def read_cpx(filepath: str) -> Tuple[np.ndarray, Dict, np.ndarray]:
                 img_nx = int(header_info[img_idx, 10])
                 img_ny = int(header_info[img_idx, 11])
                 compression = header_info[img_idx, 13]
+                
+                # Get scaling factors (stored at indices 15 and 16)
+                factor1 = header_info[img_idx, 15]
+                factor2 = header_info[img_idx, 16]
 
                 # Calculate data size in bytes
                 # Complex data = 2 values (real, imag) per pixel
@@ -252,10 +262,14 @@ def read_cpx(filepath: str) -> Tuple[np.ndarray, Dict, np.ndarray]:
                     temp_data = np.frombuffer(raw_data, dtype=np.float32)
                 elif compression == 2:
                     # 2x compression: int16
-                    temp_data = np.frombuffer(raw_data, dtype=np.int16)
+                    temp_data = np.frombuffer(raw_data, dtype=np.int16).astype(np.float32)
+                    # Apply scaling factors: data = factor2 + factor1 * data
+                    temp_data = factor2 + factor1 * temp_data
                 elif compression == 4:
                     # 4x compression: int8
-                    temp_data = np.frombuffer(raw_data, dtype=np.int8)
+                    temp_data = np.frombuffer(raw_data, dtype=np.int8).astype(np.float32)
+                    # Apply scaling factors: data = factor2 + factor1 * data
+                    temp_data = factor2 + factor1 * temp_data
                 else:
                     raise ValueError(f"Unknown compression factor: {compression}")
 
