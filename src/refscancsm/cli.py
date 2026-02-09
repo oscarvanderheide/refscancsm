@@ -68,6 +68,14 @@ Example:
         help="Show detailed information about the data",
     )
 
+    parser.add_argument(
+        "--squeeze",
+        type=lambda x: str(x).lower() in ['true', '1', 'yes'],
+        default=True,
+        metavar="BOOL",
+        help="Squeeze singleton dimensions from CPX data (default: true)",
+    )
+
     args = parser.parse_args()
 
     # Process file paths
@@ -85,6 +93,7 @@ Example:
             location_idx=args.location_idx,
             interpolation_order=args.interp_order,
             verbose=args.verbose,
+            squeeze=args.squeeze,
         )
     except Exception as e:
         print(f"\n✗ Error during interpolation: {e}", file=sys.stderr)

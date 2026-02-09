@@ -55,7 +55,7 @@ import os
 import struct
 from typing import Tuple, Dict, List
 
-def read_cpx(filepath: str) -> Tuple[np.ndarray, Dict, np.ndarray]:
+def read_cpx(filepath: str, squeeze: bool = True) -> Tuple[np.ndarray, Dict, np.ndarray]:
     """
     Read and parse a Philips CPX (Complex Matrix) file.
 
@@ -75,6 +75,8 @@ def read_cpx(filepath: str) -> Tuple[np.ndarray, Dict, np.ndarray]:
     ----------
     filepath : str
         Path to the CPX file (with or without .cpx extension)
+    squeeze : bool, optional
+        If True (default), remove singleton dimensions from output array
 
     Returns
     -------
@@ -305,6 +307,10 @@ def read_cpx(filepath: str) -> Tuple[np.ndarray, Dict, np.ndarray]:
             )
             active_dims = np.array(data.shape[: len(dimension_names)]) > 1
             data_labels = dimension_names[active_dims]
+            
+            # Squeeze output if requested
+            if squeeze:
+                data = np.squeeze(data)
 
             return data, headers, data_labels
 
