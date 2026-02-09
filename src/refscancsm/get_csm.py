@@ -48,21 +48,18 @@ def get_csm(
 
     Returns:
     --------
-    tuple
-        (interpolated_coil_maps, metadata)
-        - interpolated_coil_maps: numpy array [ncoils, nz, ny, nx] in target geometry
-        - metadata: dict with geometry information
+    - csm: numpy array [ncoils, nz, ny, nx] in target geometry
     """
     # Special print function that only prints when verbose=True
     global vprint
     vprint = _create_printer(verbose)
 
     # Load low-resolution coil maps from SENSE refscan (exported as .cpx)
-    source_csm = _load_source_csm_from_cpx(refscan_cpx_path, squeeze=squeeze)
+    refscan_coil_imgs = _load_refscan(refscan_cpx_path, squeeze=squeeze)
 
-    # Affine transformation that maps source array indices to world coordinates
-    source_idx_to_xyz = _load_idx_to_xyz_transformation(
-        sin_path_refscan, "source", location_idx
+    # Affine transformation that maps refscan array indices to world coordinates
+    refscan_idx_to_xyz = _load_idx_to_xyz_transformation(
+        sin_path_refscan, "refscan", location_idx
     )
 
     # Affine transformation that maps target array indices to world coordinates
@@ -70,17 +67,23 @@ def get_csm(
         sin_path_target, "target", location_idx
     )
 
-    # Affine transformation that maps target array indices to source array indices
-    target_idx_to_source_idx = np.linalg.inv(source_idx_to_xyz) @ target_idx_to_xyz
+    # Affine transformation that maps target array indices to refscan array indices
+    target_idx_to_refscan_idx = np.linalg.inv(refscan_idx_to_xyz) @ target_idx_to_xyz
 
     matrix_size_target = get_matrix_size(sin_path_target)
 
-    # Regrid coil maps from source to target geometry
-    target_csm = _interpolate_csm_to_target_geometry(
-        source_csm, target_idx_to_source_idx, matrix_size_target, interpolation_order
+    # Regrid refscan to target geometry
+    interpolated_coil_imgs = _interpolate_to_target_geometry(
+        refscan_coil_imgs,
+        target_idx_to_refscan_idx,
+        matrix_size_target,
+        interpolation_order,
     )
 
-    return target_csm
+    # Apply ESPIRiT to the interpolated coil images to get coil sensitivity maps in target geometry
+    csm = _espirit(interpolated_coil_imgs)
+
+    return csm
 
 
 def _create_printer(verbose: bool):
@@ -91,13 +94,16 @@ def _create_printer(verbose: bool):
         return lambda *args, **kwargs: None
 
 
-def _load_source_csm_from_cpx(cpx_path: str, squeeze: bool = True):
+def _load_refscan(cpx_path: str, squeeze: bool = True):
     """Load and prepare coil sensitivity maps from SENSE refscan exported to .cpx file."""
-    vprint(f"\n[1/5] Loading coil maps from {cpx_path}.cpx...")
+    vprint(f"\n Loading refscan from {cpx_path}.cpx...")
     (csm, _, _) = read_cpx(cpx_path, squeeze=squeeze)
     vprint(f"      ✓ Loaded shape: {csm.shape}")
 
     # The coil maps have shape (ncoils, 2, nz, ny, nx)
+    # where index 1 of the second dimension to corresponds to body coil
+    # and index 0 of the second dimension to corresponds to body coil
+    # Because we're going to be using ESPIRiT, we don't use the body coil information
     csm = csm[:, 0, :, :, :]
 
     vprint(f"      ✓ Coil maps shape: {csm.shape} [ncoils, nz, ny, nx]")
@@ -113,13 +119,13 @@ def _load_idx_to_xyz_transformation(sin_path: str, scan_type: str, location_idx:
     return idx_to_xyz
 
 
-def _interpolate_csm_to_target_geometry(
-    source_csm, target_to_source_transform, target_shape, interpolation_order: int
+def _interpolate_to_target_geometry(
+    refscan_imgs, target_to_refscan_transform, target_shape, interpolation_order: int
 ):
-    """Interpolate coil maps from source to target geometry."""
-    vprint("\n[5/5] Interpolating coil maps onto target geometry...")
+    """Interpolate refscan images to target geometry."""
+    vprint("\n Interpolating ...")
 
-    ncoils = source_csm.shape[0]
+    ncoils = refscan_imgs.shape[0]
     target_shape_tuple = tuple(target_shape.astype(int))
     nx, ny, nz = target_shape_tuple
 
@@ -135,12 +141,12 @@ def _interpolate_csm_to_target_geometry(
     target_coords_homogeneous[..., :3] = target_coords
 
     vprint("      Transforming coordinates...")
-    source_coords_flat = (
-        target_to_source_transform @ target_coords_homogeneous.reshape(-1, 4).T
+    refscan_coords_flat = (
+        target_to_refscan_transform @ target_coords_homogeneous.reshape(-1, 4).T
     ).T
-    source_coords = source_coords_flat[:, :3].reshape(*target_shape_tuple, 3)
+    refscan_coords = refscan_coords_flat[:, :3].reshape(*target_shape_tuple, 3)
 
-    target_csm = np.zeros((ncoils, nz, ny, nx), dtype=np.complex64)
+    interpolated_imgs = np.zeros((ncoils, nz, ny, nx), dtype=np.complex64)
 
     for coil_idx in range(ncoils):
         if (coil_idx + 1) % 10 == 0 or coil_idx == 0 or coil_idx == ncoils - 1:
@@ -148,14 +154,14 @@ def _interpolate_csm_to_target_geometry(
 
         coords_for_interp = np.array(
             [
-                source_coords[..., 2].ravel(),  # z
-                source_coords[..., 1].ravel(),  # y
-                source_coords[..., 0].ravel(),  # x
+                refscan_coords[..., 2].ravel(),  # z
+                refscan_coords[..., 1].ravel(),  # y
+                refscan_coords[..., 0].ravel(),  # x
             ]
         )
 
         real_part = map_coordinates(
-            source_csm[coil_idx, ...].real,
+            refscan_imgs[coil_idx, ...].real,
             coords_for_interp,
             order=interpolation_order,
             mode="constant",
@@ -163,16 +169,18 @@ def _interpolate_csm_to_target_geometry(
         ).reshape(nx, ny, nz)
 
         imag_part = map_coordinates(
-            source_csm[coil_idx, ...].imag,
+            refscan_imgs[coil_idx, ...].imag,
             coords_for_interp,
             order=interpolation_order,
             mode="constant",
             cval=0.0,
         ).reshape(nx, ny, nz)
 
-        target_csm[coil_idx, ...] = (real_part + 1j * imag_part).transpose(2, 1, 0)
+        interpolated_imgs[coil_idx, ...] = (real_part + 1j * imag_part).transpose(
+            2, 1, 0
+        )
 
     vprint("      ✓ Interpolation complete!")
-    vprint(f"      Output shape: {target_csm.shape} [ncoils, nz, ny, nx]")
+    vprint(f"      Output shape: {interpolated_imgs.shape} [ncoils, nz, ny, nx]")
 
-    return target_csm
+    return interpolated_imgs
