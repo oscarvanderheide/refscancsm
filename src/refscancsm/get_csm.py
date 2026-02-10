@@ -101,10 +101,10 @@ def _load_refscan(cpx_path: str, squeeze: bool = True):
     vprint(f"      ✓ Loaded shape: {csm.shape}")
 
     # The coil maps have shape (ncoils, 2, nz, ny, nx)
-    # where index 1 of the second dimension to corresponds to body coil
+    # where index 1 of the second dimension to corresponds to receive coils
     # and index 0 of the second dimension to corresponds to body coil
     # Because we're going to be using ESPIRiT, we don't use the body coil information
-    csm = csm[:, 0, :, :, :]
+    csm = csm[:, 1, :, :, :]
 
     vprint(f"      ✓ Coil maps shape: {csm.shape} [ncoils, nz, ny, nx]")
     return csm
