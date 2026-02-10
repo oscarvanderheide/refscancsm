@@ -49,8 +49,8 @@ def walsh_csm(img, smoothing=5, niter=10):
     v = np.conj(img_flat) * np.sum(img_flat, axis=0, keepdims=True)  # [ncoils, nvoxels]
     
     # Normalize
-    lam = np.linalg.norm(v, axis=0, keepdims=True)  # [1, nvoxels]
-    v = np.where(lam > 0, v / lam, 0)  # [ncoils, nvoxels]
+    v_norms = np.linalg.norm(v, axis=0, keepdims=True)  # [1, nvoxels]
+    v = np.where(v_norms > 0, v / v_norms, 0)  # [ncoils, nvoxels]
     
     # Power method iterations (vectorized, memory efficient)
     # R @ v = (img ⊗ conj(img)) @ v = img * (conj(img).H @ v)
@@ -60,17 +60,15 @@ def walsh_csm(img, smoothing=5, niter=10):
         # Compute R @ v = img * inner
         v = img_flat * inner  # [ncoils, nvoxels]
         # Normalize
-        lam = np.linalg.norm(v, axis=0, keepdims=True)  # [1, nvoxels]
-        v = np.where(lam > 0, v / lam, 0)  # [ncoils, nvoxels]
+        v_norms = np.linalg.norm(v, axis=0, keepdims=True)  # [1, nvoxels]
+        v = np.where(v_norms > 0, v / v_norms, 0)  # [ncoils, nvoxels]
     
     # Reshape back to original dimensions
-    rho = lam.squeeze().reshape(nz, ny, nx)  # [nz, ny, nx]
     csm = v.reshape(ncoils, nz, ny, nx)  # [ncoils, nz, ny, nx]
 
     # Remove singleton dimension for 2D case
     if img.ndim == 3:
         csm = csm[:, 0, :, :]
-        rho = rho[0, :, :]
 
     return csm
 
