@@ -1,7 +1,8 @@
 """Functions for reading information from .sin files from Philips MR systems."""
 
-import numpy as np
 import re
+
+import numpy as np
 
 
 def get_mps_to_xyz_transform(
@@ -10,16 +11,16 @@ def get_mps_to_xyz_transform(
     """
     TODO
     """
-    if scan_type not in ["source", "target"]:
-        raise ValueError(f"scan_type must be 'source' or 'target', got '{scan_type}'")
+    if scan_type not in ["refscan", "target"]:
+        raise ValueError(f"scan_type must be 'refscan' or 'target', got '{scan_type}'")
 
     # Getting the translation and linear transformation components from the .sin file
-    # is the same for both the source and target scans, but the way we build the final
+    # is the same for both the refscan and target scans, but the way we build the final
     # affine transformation matrix differs based on the scan type (due to Philips-specific conventions).
     translation = _get_mps_to_xyz_translation_part(sin_file_path, location_idx)
     linear_part = _get_mps_to_xyz_linear_part(sin_file_path, location_idx)
 
-    if scan_type == "source":
+    if scan_type == "refscan":
         translation = translation[[2, 0, 1]]
         linear_part = linear_part[:, [2, 0, 1]]
         linear_part[0, :] *= -1
@@ -123,6 +124,7 @@ def get_matrix_size(sin_file_path: str) -> np.ndarray:
                 values = re.findall(r"[-+]?\d+\.?\d*", line.split(":")[-1])
                 if len(values) >= 3:
                     # Return first 3 values (ignore the 4th value which is always 1)
+                    print(f"Found matrix size values: {values[:3]}")
                     return np.array([float(v) for v in values[:3]])
 
     raise ValueError("Could not find scan_resolutions in file")
@@ -208,4 +210,3 @@ def _get_mps_to_xyz_translation_part(
         )
 
     return translation
-
