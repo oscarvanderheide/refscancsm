@@ -3,12 +3,13 @@ from tqdm import tqdm
 
 from scipy.ndimage import filters
 
-def walsh_csm(img, smoothing=5, niter=10):
+def walsh_csm(img, smoothing=5, niter=10, use_mask=True):
     '''Calculates the coil sensitivities for 2D or 3D data using an iterative version of the Walsh method
 
     :param img: Input images, ``[coil, y, x]`` or ``[coil, z, y, x]``
     :param smoothing: Smoothing block size (default ``5``)
     :parma niter: Number of iterations for the eigenvector power method (default ``10``)
+    :param use_mask: Skip power iterations for empty voxels (default ``True``)
 
     :returns csm: Relative coil sensitivity maps, ``[coil, y, x]`` or ``[coil, z, y, x]``
     :returns rho: Total power in the estimated coils maps, ``[y, x]`` or ``[z, y, x]``
@@ -44,24 +45,42 @@ def walsh_csm(img, smoothing=5, niter=10):
     # Reshape to [ncoils, nvoxels] for vectorized operations
     img_flat = img_smooth.reshape(ncoils, -1)  # [ncoils, nz*ny*nx]
     
+    # Create mask to skip empty voxels (e.g., air in MRI)
+    if use_mask:
+        print("Creating mask to skip empty voxels...")
+        signal_strength = np.sum(np.abs(img_flat)**2, axis=0)  # [nvoxels]
+        threshold = 0.005 * np.max(signal_strength)  # 1% of max signal
+        mask = signal_strength > threshold
+        print(f"Processing {np.sum(mask)} / {len(mask)} voxels ({100*np.sum(mask)/len(mask):.1f}%)")
+        img_masked = img_flat[:, mask]  # [ncoils, n_masked_voxels]
+    else:
+        mask = None
+        img_masked = img_flat
+    
     # Initialize eigenvectors: v = conj(img) * sum(img)
     # This is equivalent to sum(R, axis=0) where R[i,j] = img[i] * conj(img[j])
-    v = np.conj(img_flat) * np.sum(img_flat, axis=0, keepdims=True)  # [ncoils, nvoxels]
+    v = np.conj(img_masked) * np.sum(img_masked, axis=0, keepdims=True)  # [ncoils, n_masked_voxels]
     
     # Normalize
-    v_norms = np.linalg.norm(v, axis=0, keepdims=True)  # [1, nvoxels]
-    v = np.where(v_norms > 0, v / v_norms, 0)  # [ncoils, nvoxels]
+    v_norms = np.linalg.norm(v, axis=0, keepdims=True)  # [1, n_masked_voxels]
+    v = np.where(v_norms > 0, v / v_norms, 0)  # [ncoils, n_masked_voxels]
     
     # Power method iterations (vectorized, memory efficient)
     # R @ v = (img ⊗ conj(img)) @ v = img * (conj(img).H @ v)
     for iter in tqdm(range(niter)):
         # Compute inner product: conj(img).H @ v = sum over coils
-        inner = np.sum(np.conj(img_flat) * v, axis=0, keepdims=True)  # [1, nvoxels]
+        inner = np.sum(np.conj(img_masked) * v, axis=0, keepdims=True)  # [1, n_masked_voxels]
         # Compute R @ v = img * inner
-        v = img_flat * inner  # [ncoils, nvoxels]
+        v = img_masked * inner  # [ncoils, n_masked_voxels]
         # Normalize
-        v_norms = np.linalg.norm(v, axis=0, keepdims=True)  # [1, nvoxels]
-        v = np.where(v_norms > 0, v / v_norms, 0)  # [ncoils, nvoxels]
+        v_norms = np.linalg.norm(v, axis=0, keepdims=True)  # [1, n_masked_voxels]
+        v = np.where(v_norms > 0, v / v_norms, 0)  # [ncoils, n_masked_voxels]
+    
+    # Reconstruct full result, with zeros for masked-out voxels
+    if use_mask:
+        v_full = np.zeros((ncoils, img_flat.shape[1]), dtype=img.dtype)
+        v_full[:, mask] = v
+        v = v_full
     
     # Reshape back to original dimensions
     csm = v.reshape(ncoils, nz, ny, nx)  # [ncoils, nz, ny, nx]
