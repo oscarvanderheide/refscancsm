@@ -2,6 +2,7 @@
 
 import numpy as np
 from scipy.ndimage import map_coordinates
+from tqdm import tqdm
 
 from .parse_cpx import read_cpx
 from .parse_sin import (
@@ -149,9 +150,7 @@ def _interpolate_to_target_geometry(
 
     interpolated_imgs = np.zeros((ncoils, nz, ny, nx), dtype=np.complex64)
 
-    for coil_idx in range(ncoils):
-        if (coil_idx + 1) % 10 == 0 or coil_idx == 0 or coil_idx == ncoils - 1:
-            vprint(f"      Processing coil {coil_idx + 1}/{ncoils}...")
+    for coil_idx in tqdm(range(ncoils)):
 
         coords_for_interp = np.array(
             [
