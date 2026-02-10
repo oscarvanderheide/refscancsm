@@ -9,6 +9,7 @@ from .parse_sin import (
     get_idx_to_mps_transform,
     get_matrix_size,
 )
+from .walsh import walsh_csm
 
 
 def get_csm(
@@ -80,8 +81,8 @@ def get_csm(
         interpolation_order,
     )
 
-    # Apply ESPIRiT to the interpolated coil images to get coil sensitivity maps in target geometry
-    csm = _espirit(interpolated_coil_imgs)
+    # For fully-sampled data, ESPIRIT can be simplified to the Walsh method for estimating coil sensitivity maps.
+    csm = walsh_csm(interpolated_coil_imgs)
 
     return csm
 
