@@ -3,18 +3,18 @@ from tqdm import tqdm
 
 from scipy.ndimage import filters
 
-def walsh_csm(img, smoothing=5, niter=10, use_mask=True):
+def walsh_csm(img, smoothing=5, niter=10, use_mask=True, mask_threshold=0.05):
     '''Calculates the coil sensitivities for 2D or 3D data using an iterative version of the Walsh method
 
     :param img: Input images, ``[coil, y, x]`` or ``[coil, z, y, x]``
     :param smoothing: Smoothing block size (default ``5``)
-    :parma niter: Number of iterations for the eigenvector power method (default ``10``)
+    :param niter: Number of iterations for the eigenvector power method (default ``10``)
     :param use_mask: Skip power iterations for empty voxels (default ``True``)
+    :param mask_threshold: Threshold for masking empty voxels (default ``0.05``)
 
     :returns csm: Relative coil sensitivity maps, ``[coil, y, x]`` or ``[coil, z, y, x]``
-    :returns rho: Total power in the estimated coils maps, ``[y, x]`` or ``[z, y, x]``
 
-    Taken from https://github.com/ismrmrd/ismrmrd-python-tools/blob/master/ismrmrdtools/coils.py
+    Originally taken from https://github.com/ismrmrd/ismrmrd-python-tools/blob/master/ismrmrdtools/coils.py and modified to be more memory efficient and to include masking of empty voxels.
     '''
 
     print("Calculating coil sensitivity maps using Walsh method...")
@@ -49,7 +49,7 @@ def walsh_csm(img, smoothing=5, niter=10, use_mask=True):
     if use_mask:
         print("Creating mask to skip empty voxels...")
         signal_strength = np.sum(np.abs(img_flat)**2, axis=0)  # [nvoxels]
-        threshold = 0.005 * np.max(signal_strength)  # 1% of max signal
+        threshold = mask_threshold * np.max(signal_strength)  # Threshold based on max signal
         mask = signal_strength > threshold
         print(f"Processing {np.sum(mask)} / {len(mask)} voxels ({100*np.sum(mask)/len(mask):.1f}%)")
         img_masked = img_flat[:, mask]  # [ncoils, n_masked_voxels]
