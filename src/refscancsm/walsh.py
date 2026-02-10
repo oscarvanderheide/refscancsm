@@ -1,4 +1,6 @@
 import numpy as np
+from tqdm import tqdm
+
 from scipy.ndimage import filters
 
 def walsh_csm(img, smoothing=5, niter=10):
@@ -14,6 +16,7 @@ def walsh_csm(img, smoothing=5, niter=10):
     Taken from https://github.com/ismrmrd/ismrmrd-python-tools/blob/master/ismrmrdtools/coils.py
     '''
 
+    print("Calculating coil sensitivity maps using Walsh method...")
     assert img.ndim in [3, 4], "Coil sensitivity map must have 3 (2D) or 4 (3D) dimensions"
 
     ncoils = img.shape[0]
@@ -32,41 +35,37 @@ def walsh_csm(img, smoothing=5, niter=10):
         img_reshape = img
 
     # Smooth each coil image first (more memory efficient than smoothing covariance)
+    print("Smoothing coil images...")
     img_smooth = np.zeros_like(img_reshape)
     for p in range(ncoils):
         img_smooth[p] = smooth(img_reshape[p], smoothing)
 
-    # At each point in the image, compute covariance matrix on-the-fly,
-    # then find the dominant eigenvector and corresponding eigenvalue
-    # using the power method
-    rho = np.zeros((nz, ny, nx))
-    csm = np.zeros((ncoils, nz, ny, nx), dtype=img.dtype)
+    # Vectorized power method without storing covariance matrices
+    # Reshape to [ncoils, nvoxels] for vectorized operations
+    img_flat = img_smooth.reshape(ncoils, -1)  # [ncoils, nz*ny*nx]
     
-    for z in range(nz):
-        print(f"Processing slice {z + 1}/{nz}...")
-        for y in range(ny):
-            for x in range(nx):
-                # Compute covariance matrix for this voxel
-                img_voxel = img_smooth[:, z, y, x]  # [ncoils]
-                R = np.outer(img_voxel, np.conj(img_voxel))  # [ncoils, ncoils]
-                
-                # Power method to find dominant eigenvector
-                v = np.sum(R, axis=0)
-                lam = np.linalg.norm(v)
-                if lam > 0:
-                    v = v / lam
-                else:
-                    v = np.zeros(ncoils, dtype=img.dtype)
-                    lam = 0
-
-                for iter in range(niter):
-                    v = np.dot(R, v)
-                    lam = np.linalg.norm(v)
-                    if lam > 0:
-                        v = v / lam
-
-                rho[z, y, x] = lam
-                csm[:, z, y, x] = v
+    # Initialize eigenvectors: v = conj(img) * sum(img)
+    # This is equivalent to sum(R, axis=0) where R[i,j] = img[i] * conj(img[j])
+    v = np.conj(img_flat) * np.sum(img_flat, axis=0, keepdims=True)  # [ncoils, nvoxels]
+    
+    # Normalize
+    lam = np.linalg.norm(v, axis=0, keepdims=True)  # [1, nvoxels]
+    v = np.where(lam > 0, v / lam, 0)  # [ncoils, nvoxels]
+    
+    # Power method iterations (vectorized, memory efficient)
+    # R @ v = (img ⊗ conj(img)) @ v = img * (conj(img).H @ v)
+    for iter in tqdm(range(niter)):
+        # Compute inner product: conj(img).H @ v = sum over coils
+        inner = np.sum(np.conj(img_flat) * v, axis=0, keepdims=True)  # [1, nvoxels]
+        # Compute R @ v = img * inner
+        v = img_flat * inner  # [ncoils, nvoxels]
+        # Normalize
+        lam = np.linalg.norm(v, axis=0, keepdims=True)  # [1, nvoxels]
+        v = np.where(lam > 0, v / lam, 0)  # [ncoils, nvoxels]
+    
+    # Reshape back to original dimensions
+    rho = lam.squeeze().reshape(nz, ny, nx)  # [nz, ny, nx]
+    csm = v.reshape(ncoils, nz, ny, nx)  # [ncoils, nz, ny, nx]
 
     # Remove singleton dimension for 2D case
     if img.ndim == 3:
