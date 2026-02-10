@@ -74,7 +74,7 @@ def read_cpx(filepath: str, squeeze: bool = True) -> Tuple[np.ndarray, Dict, np.
     Parameters
     ----------
     filepath : str
-        Path to the CPX file (with or without .cpx extension)
+        Path to the CPX file (must include .cpx extension)
     squeeze : bool, optional
         If True (default), remove singleton dimensions from output array
 
@@ -109,7 +109,7 @@ def read_cpx(filepath: str, squeeze: bool = True) -> Tuple[np.ndarray, Dict, np.
 
     Examples
     --------
-    >>> data, headers, labels = read_cpx("path/to/coilscan")
+    >>> data, headers, labels = read_cpx("path/to/coilscan.cpx")
     >>> print(f"Data shape: {data.shape}")
     Data shape: (48, 1, 1, 1, 1, 1, 1, 1, 160, 116)
     >>> print(f"Active dimensions: {labels}")
@@ -119,9 +119,9 @@ def read_cpx(filepath: str, squeeze: bool = True) -> Tuple[np.ndarray, Dict, np.
     if not isinstance(filepath, str):
         raise ValueError("Input filepath must be a string")
 
-    # Add .cpx extension if not present
+    # Require .cpx extension
     if not filepath.endswith((".cpx", ".CPX")):
-        filepath = filepath + ".cpx"
+        raise ValueError(f"Filepath must have .cpx extension: {filepath}")
 
     # Check if file exists
     if not os.path.exists(filepath):

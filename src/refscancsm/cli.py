@@ -14,28 +14,33 @@ def main():
         description="Interpolate coil sensitivity maps from reference scan to target scan geometry",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Example:
-  # Basic usage with .npy output
-  get_csm refscan.cpx refscan.sin target.sin -o csm.npy
+Examples:
+  # Auto-detect senserefscan files in same directory
+  get_csm target.sin -o csm.npy
+  
+  # Explicitly specify refscan files
+  get_csm target.sin --refscan-cpx refscan.cpx --refscan-sin refscan.sin -o csm.npy
 """,
-    )
-
-    parser.add_argument(
-        "refscan_cpx",
-        type=str,
-        help="Path to reference scan CPX file (with or without .cpx extension)",
-    )
-
-    parser.add_argument(
-        "refscan_sin",
-        type=str,
-        help="Path to reference scan SIN file",
     )
 
     parser.add_argument(
         "target_sin",
         type=str,
         help="Path to target scan SIN file",
+    )
+
+    parser.add_argument(
+        "--refscan-cpx",
+        type=str,
+        default=None,
+        help="Path to reference scan CPX file (with .cpx extension). If not provided, auto-detects senserefscan file.",
+    )
+
+    parser.add_argument(
+        "--refscan-sin",
+        type=str,
+        default=None,
+        help="Path to reference scan SIN file. If not provided, auto-detects senserefscan file.",
     )
 
     parser.add_argument(
@@ -78,18 +83,11 @@ Example:
 
     args = parser.parse_args()
 
-    # Process file paths
-    refscan_cpx = args.refscan_cpx
-
-    # Remove .cpx extension if provided (readCpx adds it automatically)
-    if refscan_cpx.endswith(".cpx") or refscan_cpx.endswith(".CPX"):
-        refscan_cpx = refscan_cpx[:-4]
-
     try:
         coil_maps = get_csm(
-            refscan_cpx,
-            args.refscan_sin,
             args.target_sin,
+            refscan_cpx_path=args.refscan_cpx,
+            sin_path_refscan=args.refscan_sin,
             location_idx=args.location_idx,
             interpolation_order=args.interp_order,
             verbose=args.verbose,

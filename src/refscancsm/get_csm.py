@@ -1,5 +1,7 @@
 """Main workflow for generating coil sensitivity maps in target geometry."""
 
+import os
+from pathlib import Path
 import numpy as np
 from scipy.ndimage import map_coordinates
 from tqdm import tqdm
@@ -14,9 +16,9 @@ from .walsh import walsh_csm
 
 
 def get_csm(
-    refscan_cpx_path: str,
-    sin_path_refscan: str,
     sin_path_target: str,
+    refscan_cpx_path: str = None,
+    sin_path_refscan: str = None,
     location_idx: int = 1,
     interpolation_order: int = 1,
     verbose: bool = True,
@@ -34,12 +36,14 @@ def get_csm(
 
     Parameters:
     -----------
-    refscan_cpx_path : str
-        Path to reference scan .cpx file (without .cpx extension)
-    sin_path_refscan : str
-        Path to reference scan .sin file
     sin_path_target : str
         Path to target scan .sin file
+    refscan_cpx_path : str, optional
+        Path to reference scan .cpx file (with .cpx extension)
+        If None, auto-detects file with 'senserefscan' in the same directory
+    sin_path_refscan : str, optional
+        Path to reference scan .sin file
+        If None, auto-detects file with 'senserefscan' in the same directory
     location_idx : int
         Location index to extract from .sin files (default: 1)
     interpolation_order : int
@@ -55,6 +59,13 @@ def get_csm(
     # Special print function that only prints when verbose=True
     global vprint
     vprint = _create_printer(verbose)
+
+    # Auto-detect refscan files if not provided
+    if refscan_cpx_path is None or sin_path_refscan is None:
+        vprint("\n Auto-detecting senserefscan files...")
+        refscan_cpx_path, sin_path_refscan = _find_refscan_files(sin_path_target)
+        vprint(f"      ✓ Found CPX: {refscan_cpx_path}")
+        vprint(f"      ✓ Found SIN: {sin_path_refscan}")
 
     # Load low-resolution coil maps from SENSE refscan (exported as .cpx)
     refscan_coil_imgs = _load_refscan(refscan_cpx_path, squeeze=squeeze)
@@ -88,6 +99,64 @@ def get_csm(
     return csm
 
 
+def _find_refscan_files(target_sin_path: str):
+    """
+    Auto-detect senserefscan .cpx and .sin files in the same directory as target.
+    
+    Parameters:
+    -----------
+    target_sin_path : str
+        Path to the target .sin file
+        
+    Returns:
+    --------
+    tuple: (cpx_path, sin_path) for senserefscan files
+    
+    Raises:
+    -------
+    FileNotFoundError: If no senserefscan files are found
+    ValueError: If multiple senserefscan files are found
+    """
+    target_dir = Path(target_sin_path).parent
+    
+    # Find all .sin files with 'senserefscan' in the name
+    sin_candidates = list(target_dir.glob("*senserefscan*.sin"))
+    
+    if len(sin_candidates) == 0:
+        raise FileNotFoundError(
+            f"No senserefscan .sin files found in {target_dir}. "
+            "Please provide sin_path_refscan explicitly."
+        )
+    elif len(sin_candidates) > 1:
+        raise ValueError(
+            f"Multiple senserefscan .sin files found in {target_dir}:\n"
+            + "\n".join(f"  - {f.name}" for f in sin_candidates)
+            + "\nPlease provide sin_path_refscan explicitly."
+        )
+    
+    sin_refscan = sin_candidates[0]
+    
+    # Find all .cpx files with 'senserefscan' in the name
+    cpx_candidates = list(target_dir.glob("*senserefscan*.cpx"))
+    
+    if len(cpx_candidates) == 0:
+        raise FileNotFoundError(
+            f"No senserefscan .cpx files found in {target_dir}. "
+            "Please provide refscan_cpx_path explicitly."
+        )
+    elif len(cpx_candidates) > 1:
+        raise ValueError(
+            f"Multiple senserefscan .cpx files found in {target_dir}:\n"
+            + "\n".join(f"  - {f.name}" for f in cpx_candidates)
+            + "\nPlease provide refscan_cpx_path explicitly."
+        )
+    
+    cpx_refscan = cpx_candidates[0]
+    
+    # Return with .cpx extension
+    return str(cpx_refscan), str(sin_refscan)
+
+
 def _create_printer(verbose: bool):
     """Create a print function that only prints when verbose is True."""
     if verbose:
@@ -98,7 +167,7 @@ def _create_printer(verbose: bool):
 
 def _load_refscan(cpx_path: str, squeeze: bool = True):
     """Load and prepare coil sensitivity maps from SENSE refscan exported to .cpx file."""
-    vprint(f"\n Loading refscan from {cpx_path}.cpx...")
+    vprint(f"\n Loading refscan from {cpx_path}...")
     (csm, _, _) = read_cpx(cpx_path, squeeze=squeeze)
     vprint(f"      ✓ Loaded shape: {csm.shape}")
 
