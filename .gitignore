@@ -8,3 +8,7 @@ wheels/
 
 # Virtual environments
 .venv
+
+*.npy
+*.npz
+*.mat
