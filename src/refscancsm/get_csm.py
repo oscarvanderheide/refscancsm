@@ -1,6 +1,5 @@
 """Main workflow for generating coil sensitivity maps in target geometry."""
 
-import os
 from pathlib import Path
 import numpy as np
 from scipy.ndimage import map_coordinates
@@ -21,7 +20,6 @@ def get_csm(
     sin_path_refscan: str = None,
     location_idx: int = 1,
     interpolation_order: int = 1,
-    verbose: bool = True,
     squeeze: bool = True,
 ):
     """
@@ -56,16 +54,13 @@ def get_csm(
     --------
     - csm: numpy array [ncoils, nz, ny, nx] in target geometry
     """
-    # Special print function that only prints when verbose=True
-    global vprint
-    vprint = _create_printer(verbose)
 
     # Auto-detect refscan files if not provided
     if refscan_cpx_path is None or sin_path_refscan is None:
-        vprint("\n Auto-detecting senserefscan files...")
+        print("\n Auto-detecting senserefscan files...")
         refscan_cpx_path, sin_path_refscan = _find_refscan_files(sin_path_target)
-        vprint(f"      ✓ Found CPX: {refscan_cpx_path}")
-        vprint(f"      ✓ Found SIN: {sin_path_refscan}")
+        print(f"      ✓ Found CPX: {refscan_cpx_path}")
+        print(f"      ✓ Found SIN: {sin_path_refscan}")
 
     # Load low-resolution coil maps from SENSE refscan (exported as .cpx)
     refscan_coil_imgs = _load_refscan(refscan_cpx_path, squeeze=squeeze)
@@ -83,7 +78,7 @@ def get_csm(
     # Affine transformation that maps target array indices to refscan array indices
     target_idx_to_refscan_idx = np.linalg.inv(refscan_idx_to_xyz) @ target_idx_to_xyz
 
-    matrix_size_target = get_matrix_size(sin_path_target)
+    matrix_size_target = get_matrix_size(sin_path_target, "target")
 
     # Regrid refscan to target geometry
     interpolated_coil_imgs = _interpolate_to_target_geometry(
@@ -102,26 +97,26 @@ def get_csm(
 def _find_refscan_files(target_sin_path: str):
     """
     Auto-detect senserefscan .cpx and .sin files in the same directory as target.
-    
+
     Parameters:
     -----------
     target_sin_path : str
         Path to the target .sin file
-        
+
     Returns:
     --------
     tuple: (cpx_path, sin_path) for senserefscan files
-    
+
     Raises:
     -------
     FileNotFoundError: If no senserefscan files are found
     ValueError: If multiple senserefscan files are found
     """
     target_dir = Path(target_sin_path).parent
-    
+
     # Find all .sin files with 'senserefscan' in the name
     sin_candidates = list(target_dir.glob("*senserefscan*.sin"))
-    
+
     if len(sin_candidates) == 0:
         raise FileNotFoundError(
             f"No senserefscan .sin files found in {target_dir}. "
@@ -133,12 +128,12 @@ def _find_refscan_files(target_sin_path: str):
             + "\n".join(f"  - {f.name}" for f in sin_candidates)
             + "\nPlease provide sin_path_refscan explicitly."
         )
-    
+
     sin_refscan = sin_candidates[0]
-    
+
     # Find all .cpx files with 'senserefscan' in the name
     cpx_candidates = list(target_dir.glob("*senserefscan*.cpx"))
-    
+
     if len(cpx_candidates) == 0:
         raise FileNotFoundError(
             f"No senserefscan .cpx files found in {target_dir}. "
@@ -150,26 +145,18 @@ def _find_refscan_files(target_sin_path: str):
             + "\n".join(f"  - {f.name}" for f in cpx_candidates)
             + "\nPlease provide refscan_cpx_path explicitly."
         )
-    
+
     cpx_refscan = cpx_candidates[0]
-    
+
     # Return with .cpx extension
     return str(cpx_refscan), str(sin_refscan)
 
 
-def _create_printer(verbose: bool):
-    """Create a print function that only prints when verbose is True."""
-    if verbose:
-        return print
-    else:
-        return lambda *args, **kwargs: None
-
-
 def _load_refscan(cpx_path: str, squeeze: bool = True):
     """Load and prepare coil sensitivity maps from SENSE refscan exported to .cpx file."""
-    vprint(f"\n Loading refscan from {cpx_path}...")
+    print(f"\n Loading refscan from {cpx_path}...")
     (csm, _, _) = read_cpx(cpx_path, squeeze=squeeze)
-    vprint(f"      ✓ Loaded shape: {csm.shape}")
+    print(f"      ✓ Loaded shape: {csm.shape}")
 
     # The coil maps have shape (ncoils, 2, nz, ny, nx)
     # where index 1 of the second dimension to corresponds to receive coils
@@ -177,14 +164,19 @@ def _load_refscan(cpx_path: str, squeeze: bool = True):
     # Because we're going to be using ESPIRiT, we don't use the body coil information
     csm = csm[:, 1, :, :, :]
 
-    vprint(f"      ✓ Coil maps shape: {csm.shape} [ncoils, nz, ny, nx]")
+    print(f"      ✓ Coil maps shape: {csm.shape} [ncoils, nz, ny, nx]")
     return csm
 
 
 def _load_idx_to_xyz_transformation(sin_path: str, scan_type: str, location_idx: int):
     """Load transformation from array indices to world coordinates for a given scan."""
-    idx_to_mps = get_idx_to_mps_transform(sin_path)
+    idx_to_mps = get_idx_to_mps_transform(sin_path, scan_type)
+
+    print(idx_to_mps)
+
     mps_to_xyz = get_mps_to_xyz_transform(sin_path, scan_type, location_idx)
+
+    print(mps_to_xyz)
     idx_to_xyz = mps_to_xyz @ idx_to_mps
 
     return idx_to_xyz
@@ -194,14 +186,14 @@ def _interpolate_to_target_geometry(
     refscan_imgs, target_to_refscan_transform, target_shape, interpolation_order: int
 ):
     """Interpolate refscan images to target geometry."""
-    vprint("\n Interpolating ...")
+    print("\n Interpolating ...")
 
     ncoils = refscan_imgs.shape[0]
     target_shape_tuple = tuple(target_shape.astype(int))
     nx, ny, nz = target_shape_tuple
 
-    vprint(f"      Target shape: {target_shape_tuple}")
-    vprint(
+    print(f"      Target shape: {target_shape_tuple}")
+    print(
         f"      Interpolation: {['nearest', 'linear', '', 'cubic'][interpolation_order]}"
     )
 
@@ -211,7 +203,7 @@ def _interpolate_to_target_geometry(
     target_coords_homogeneous = np.ones((*target_coords.shape[:-1], 4))
     target_coords_homogeneous[..., :3] = target_coords
 
-    vprint("      Transforming coordinates...")
+    print("      Transforming coordinates...")
     refscan_coords_flat = (
         target_to_refscan_transform @ target_coords_homogeneous.reshape(-1, 4).T
     ).T
@@ -220,7 +212,6 @@ def _interpolate_to_target_geometry(
     interpolated_imgs = np.zeros((ncoils, nz, ny, nx), dtype=np.complex64)
 
     for coil_idx in tqdm(range(ncoils)):
-
         coords_for_interp = np.array(
             [
                 refscan_coords[..., 2].ravel(),  # z
@@ -249,7 +240,7 @@ def _interpolate_to_target_geometry(
             2, 1, 0
         )
 
-    vprint("      ✓ Interpolation complete!")
-    vprint(f"      Output shape: {interpolated_imgs.shape} [ncoils, nz, ny, nx]")
+    print("      ✓ Interpolation complete!")
+    print(f"      Output shape: {interpolated_imgs.shape} [ncoils, nz, ny, nx]")
 
     return interpolated_imgs

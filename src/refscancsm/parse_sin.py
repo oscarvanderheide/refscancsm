@@ -40,7 +40,7 @@ def get_mps_to_xyz_transform(
     return mps_to_xyz
 
 
-def get_idx_to_mps_transform(sin_file_path: str) -> np.ndarray:
+def get_idx_to_mps_transform(sin_file_path: str, scan_type: str = "target") -> np.ndarray:
     """
     Create 4x4 matrix that converts array indices (augmented with a 1) to coordinates in the
     MPS (Measurement, Phase, Slice) system of the scan.
@@ -52,6 +52,8 @@ def get_idx_to_mps_transform(sin_file_path: str) -> np.ndarray:
     ----------
     sin_file_path : str
         Path to the .sin file
+    scan_type : str
+        Either "refscan" or "target" (default: "target")
 
     Returns
     -------
@@ -61,7 +63,7 @@ def get_idx_to_mps_transform(sin_file_path: str) -> np.ndarray:
 
     # Get number of voxels and voxel size in each of the three dimensions
     voxel_sizes = get_voxel_sizes(sin_file_path)
-    matrix_size = get_matrix_size(sin_file_path)
+    matrix_size = get_matrix_size(sin_file_path, scan_type)
 
     # Create diagonal scaling matrix
     idx_to_mps = np.eye(4)
@@ -103,31 +105,42 @@ def get_voxel_sizes(sin_file_path: str) -> np.ndarray:
     raise ValueError("Could not find voxel_sizes in file")
 
 
-def get_matrix_size(sin_file_path: str) -> np.ndarray:
+def get_matrix_size(sin_file_path: str, scan_type: str) -> np.ndarray:
     """
-    Reads a .sin file and extracts the matrix size (stored as scan_resolutions).
+    Reads a .sin file and extracts the matrix size.
+    
+    For refscan: looks for "recon_resolutions"
+    For target: looks for "scan_resolutions"
 
     Parameters
     ----------
     sin_file_path : str
         Path to the .sin file
+    scan_type : str
+        Either "refscan" or "target"
 
     Returns
     -------
     numpy.ndarray
         1D array with 3 matrix size values [x, y, z]
     """
+    if scan_type not in ["refscan", "target"]:
+        raise ValueError(f"scan_type must be 'refscan' or 'target', got '{scan_type}'")
+    
+    search_key = "recon_resolutions" if scan_type == "refscan" else "scan_resolutions"
+    
     with open(sin_file_path, "r") as f:
         for line in f:
-            if "scan_resolutions" in line:
+            if search_key in line:
                 # Extract integer or float values after the last colon
                 values = re.findall(r"[-+]?\d+\.?\d*", line.split(":")[-1])
                 if len(values) >= 3:
                     # Return first 3 values (ignore the 4th value which is always 1)
+                    print(f"Found {search_key} in {sin_file_path}: {line.strip()}")
                     print(f"Found matrix size values: {values[:3]}")
                     return np.array([float(v) for v in values[:3]])
 
-    raise ValueError("Could not find scan_resolutions in file")
+    raise ValueError(f"Could not find {search_key} in file {sin_file_path}")
 
 
 def _get_mps_to_xyz_linear_part(sin_file_path: str, location_idx: int) -> np.ndarray:
