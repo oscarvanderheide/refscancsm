@@ -1,15 +1,16 @@
 """Main workflow for generating coil sensitivity maps in target geometry."""
 
 from pathlib import Path
+
 import numpy as np
-from scipy.ndimage import map_coordinates
 from tqdm import tqdm
+from scipy.ndimage import map_coordinates
 
 from .parse_cpx import read_cpx
 from .parse_sin import (
-    get_mps_to_xyz_transform,
     get_idx_to_mps_transform,
     get_matrix_size,
+    get_mps_to_xyz_transform,
 )
 from .walsh import walsh_csm
 
@@ -164,6 +165,11 @@ def _load_refscan(cpx_path: str, squeeze: bool = True):
     # Because we're going to be using ESPIRiT, we don't use the body coil information
     csm = csm[:, 1, :, :, :]
 
+    # invert z dimension to match reconframe convention (k-space is acquired from feet to head)
+    csm = csm[:, ::-1, :, :]
+    # rotate by 180 degrees in the xy plane to match reconframe
+    csm = np.rot90(csm, k=2, axes=(2, 3))
+
     print(f"      ✓ Coil maps shape: {csm.shape} [ncoils, nz, ny, nx]")
     return csm
 
@@ -192,41 +198,48 @@ def _interpolate_to_target_geometry(
     target_shape_tuple = tuple(target_shape.astype(int))
     nx, ny, nz = target_shape_tuple
 
-    print(f"      Target shape: {target_shape_tuple}")
-    print(
-        f"      Interpolation: {['nearest', 'linear', '', 'cubic'][interpolation_order]}"
-    )
+    Z, Y, X = np.meshgrid(np.arange(nz), np.arange(ny), np.arange(nx), indexing="ij")
 
-    target_coords = np.stack(
-        np.meshgrid(np.arange(nx), np.arange(ny), np.arange(nz), indexing="ij"), axis=-1
-    )
-    target_coords_homogeneous = np.ones((*target_coords.shape[:-1], 4))
-    target_coords_homogeneous[..., :3] = target_coords
+    # Flip the M and P indices to match the physical orientation expected by the transform
+    # This effectively mirrors the coordinate system before it hits the matrix
+    X = (nx - 1) - X
+    # Y = (ny - 1) - Y
 
-    print("      Transforming coordinates...")
+    # 2. Stack into MPS order for the Matrix input: [i_m, i_p, i_s]
+    # target_coords shape: (nz, ny, nx, 3)
+    target_coords_mps = np.stack([X, Y, Z], axis=-1)
+
+    target_coords_homogeneous = np.ones((*target_coords_mps.shape[:-1], 4))
+    target_coords_homogeneous[..., :3] = target_coords_mps
+
+    # 3. Transform to Source Indices
+    # Result is in [i_m_ref, i_p_ref, i_s_ref] order
     refscan_coords_flat = (
         target_to_refscan_transform @ target_coords_homogeneous.reshape(-1, 4).T
     ).T
-    refscan_coords = refscan_coords_flat[:, :3].reshape(*target_shape_tuple, 3)
+    refscan_coords = refscan_coords_flat[:, :3].reshape(nz, ny, nx, 3)
+
+    # 4. MAP COORDINATES TO ARRAY AXES
+    # refscan_imgs is (nz, ny, nx) -> Axis 0=S, Axis 1=P, Axis 2=M
+    # So we must provide indices in order [S_idx, P_idx, M_idx]
+    coords_for_interp = np.array(
+        [
+            refscan_coords[..., 2].ravel(),  # Slice index (S) -> maps to nz
+            refscan_coords[..., 1].ravel(),  # Phase index (P) -> maps to ny
+            refscan_coords[..., 0].ravel(),  # Freq index (M)  -> maps to nx
+        ]
+    )
 
     interpolated_imgs = np.zeros((ncoils, nz, ny, nx), dtype=np.complex64)
 
-    for coil_idx in tqdm(range(ncoils)):
-        coords_for_interp = np.array(
-            [
-                refscan_coords[..., 2].ravel(),  # z
-                refscan_coords[..., 1].ravel(),  # y
-                refscan_coords[..., 0].ravel(),  # x
-            ]
-        )
-
+    for coil_idx in tqdm(range(ncoils), desc="Interpolating Coils"):
         real_part = map_coordinates(
             refscan_imgs[coil_idx, ...].real,
             coords_for_interp,
             order=interpolation_order,
             mode="constant",
             cval=0.0,
-        ).reshape(nx, ny, nz)
+        ).reshape(nz, ny, nx)
 
         imag_part = map_coordinates(
             refscan_imgs[coil_idx, ...].imag,
@@ -234,11 +247,9 @@ def _interpolate_to_target_geometry(
             order=interpolation_order,
             mode="constant",
             cval=0.0,
-        ).reshape(nx, ny, nz)
+        ).reshape(nz, ny, nx)
 
-        interpolated_imgs[coil_idx, ...] = (real_part + 1j * imag_part).transpose(
-            2, 1, 0
-        )
+        interpolated_imgs[coil_idx, ...] = real_part + 1j * imag_part
 
     print("      ✓ Interpolation complete!")
     print(f"      Output shape: {interpolated_imgs.shape} [ncoils, nz, ny, nx]")
