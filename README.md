@@ -19,24 +19,36 @@ A Python package for reading CPX files from a Philips SENSE refscan and interpol
 ### From GitHub (recommended for development)
 
 ```bash
-# Install with uv
-uv add git+https://github.com/yourusername/refscancsm.git
-
-# Or using pip
-pip install git+https://github.com/yourusername/refscancsm.git
+# Install with uv into a python project
+uv add git+https://github.com/oscarvanderheide/refscancsm.git
 ```
 
-### Direct usage with uvx (no installation needed)
+Then in your Python script, do
+`from refscancsm import get_csm`
+
+or in the terminal do
+`uv run get_csm <path_to_target.sin>`
+or 
+`uv run -h` for help.
+
+### Direct usage with uvx (no installation into project needed)
 
 ```bash
-uvx --from git+https://github.com/yourusername/refscancsm.git get_csm <file.cpx>
+uvx --from git+https://github.com/oscarvanderheide/refscancsm.git get_csm <file.cpx>
 ```
+
+Recommended to make an alias, e.g.
+```
+alias get_csm='uvx --from git+https://github.com/oscarvanderheide/refscancsm.git get_csm'
+```
+Then you can do `get_csm <path_to_target.sin>` from anywhere
+
 
 ### Local development installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/refscancsm.git
+git clone https://github.com/oscarvanderheide/refscancsm.git
 cd refscancsm
 
 # Install in editable mode
