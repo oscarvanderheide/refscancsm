@@ -213,7 +213,8 @@ def _interpolate_to_target_geometry(
     # Flip the M and P indices to match the physical orientation expected by the transform
     # This effectively mirrors the coordinate system before it hits the matrix
     X = (nx - 1) - X
-    # Y = (ny - 1) - Y
+    Y = (ny - 1) - Y
+    Z = (nz - 1) - Z
 
     # 2. Stack into MPS order for the Matrix input: [i_m, i_p, i_s]
     # target_coords shape: (nz, ny, nx, 3)
