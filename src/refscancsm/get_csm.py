@@ -19,7 +19,6 @@ def get_csm(
     sin_path_target: str,
     refscan_cpx_path: str = None,
     sin_path_refscan: str = None,
-    location_idx: int = 1,
     interpolation_order: int = 1,
     squeeze: bool = True,
 ):
@@ -43,8 +42,6 @@ def get_csm(
     sin_path_refscan : str, optional
         Path to reference scan .sin file
         If None, auto-detects file with 'senserefscan' in the same directory
-    location_idx : int
-        Location index to extract from .sin files (default: 1)
     interpolation_order : int
         Interpolation order: 0=nearest, 1=linear, 3=cubic (default: 1)
         Order 1 (linear) is recommended to avoid overshoots at mask boundaries
@@ -168,18 +165,18 @@ def _load_refscan(cpx_path: str, squeeze: bool = True):
 
 
 def _load_idx_to_idx_transformation(
-    sin_path_refscan: str, sin_path_target: str, location_idx: int
+    sin_path_refscan: str, sin_path_target: str
 ):
     """Affine transformation that maps refscan array indices to world coordinates."""
 
     # Affine transformation that maps refscan array indices to world coordinates
     refscan_idx_to_xyz = _load_idx_to_xyz_transformation(
-        sin_path_refscan, "refscan", location_idx
+        sin_path_refscan, "refscan"
     )
 
     # Affine transformation that maps target array indices to world coordinates
     target_idx_to_xyz = _load_idx_to_xyz_transformation(
-        sin_path_target, "target", location_idx
+        sin_path_target, "target"
     )
 
     # Affine transformation that maps target array indices to refscan array indices
@@ -188,13 +185,13 @@ def _load_idx_to_idx_transformation(
     return target_idx_to_refscan_idx
 
 
-def _load_idx_to_xyz_transformation(sin_path: str, scan_type: str, location_idx: int):
+def _load_idx_to_xyz_transformation(sin_path: str, scan_type: str):
     """Load transformation from array indices to world coordinates for a given scan."""
 
     # Affine transformation that array indices to MPS
     idx_to_mps = get_idx_to_mps_transform(sin_path, scan_type)
     # Affine transformation that maps MPS to world coordinates
-    mps_to_xyz = get_mps_to_xyz_transform(sin_path, scan_type, location_idx)
+    mps_to_xyz = get_mps_to_xyz_transform(sin_path, scan_type)
     # Multiplty the matrices to get idx to world coordinates transformation
     idx_to_xyz = mps_to_xyz @ idx_to_mps
 

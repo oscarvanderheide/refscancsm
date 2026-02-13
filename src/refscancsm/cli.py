@@ -52,13 +52,6 @@ Examples:
     )
 
     parser.add_argument(
-        "--location-idx",
-        type=int,
-        default=1,
-        help="Location index to extract from SIN files (default: 1)",
-    )
-
-    parser.add_argument(
         "--interp-order",
         type=int,
         default=1,
@@ -88,9 +81,7 @@ Examples:
             args.target_sin,
             refscan_cpx_path=args.refscan_cpx,
             sin_path_refscan=args.refscan_sin,
-            location_idx=args.location_idx,
             interpolation_order=args.interp_order,
-            verbose=args.verbose,
             squeeze=args.squeeze,
         )
     except Exception as e:

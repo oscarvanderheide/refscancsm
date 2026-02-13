@@ -89,8 +89,7 @@ get_csm --help
 **Options:**
 - `-o, --output`: Output file path (default: csm.npy)
 - `--interp-order {0,1,3}`: Interpolation order (0=nearest, 1=linear, 3=cubic)
-- `--location-idx`: Location index from SIN files (default: 1)
-- `-v, --verbose`: Show detailed information
+- `--squeeze`: Squeeze singleton dimensions from CPX data (default: true)
 
 ### Python API
 
@@ -102,12 +101,10 @@ import numpy as np
 
 # Interpolate coil sensitivity maps from reference to target geometry
 coil_maps = get_csm(
-    refscan_cpx_path="path/to/refscan",  # without .cpx extension
-    sin_path_refscan="path/to/refscan.sin",
     sin_path_target="path/to/target.sin",
-    location_idx=1,
+    refscan_cpx_path="path/to/refscan.cpx",
+    sin_path_refscan="path/to/refscan.sin",
     interpolation_order=1,  # 0=nearest, 1=linear, 3=cubic
-    verbose=True,
 )
 
 print(f"Interpolated coil maps shape: {coil_maps.shape}")  # [ncoils, nz, ny, nx]
@@ -137,7 +134,7 @@ print(f"Matrix size: {matrix_size}")
 
 # Get transformation matrices
 idx_to_mps = get_idx_to_mps_transform("path/to/file.sin")
-mps_to_xyz = get_mps_to_xyz_transform("path/to/file.sin", "source", location_idx=1)
+mps_to_xyz = get_mps_to_xyz_transform("path/to/file.sin", "target")
 idx_to_xyz = mps_to_xyz @ idx_to_mps
 print(f"Index to world transformation:\n{idx_to_xyz}")
 ```
@@ -146,7 +143,7 @@ print(f"Index to world transformation:\n{idx_to_xyz}")
 
 ### Main Interpolation Function
 
-- **`get_csm(refscan_cpx_path, sin_path_refscan, sin_path_target, location_idx=1, interpolation_order=1, verbose=True)`**
+- **`get_csm(sin_path_target, refscan_cpx_path=None, sin_path_refscan=None, interpolation_order=1, squeeze=True)`**
   - Complete workflow to interpolate coil maps from reference to target geometry
   - Returns: numpy array [ncoils, nz, ny, nx] in target geometry
 
@@ -169,11 +166,11 @@ print(f"Index to world transformation:\n{idx_to_xyz}")
 
 ### Transformation Functions
 
-- **`get_idx_to_mps_transform(sin_file_path)`**: Create 4x4 matrix that converts array indices to MPS coordinates
+- **`get_idx_to_mps_transform(sin_file_path, scan_type)`**: Create 4x4 matrix that converts array indices to MPS coordinates
   - Returns: 4x4 transformation matrix
 
-- **`get_mps_to_xyz_transform(sin_file_path, scan_type, location_idx=1)`**: Get transformation from MPS to world coordinates
-  - `scan_type`: Either "source" or "target"
+- **`get_mps_to_xyz_transform(sin_file_path, scan_type)`**: Get transformation from MPS to world coordinates
+  - `scan_type`: Either "refscan" or "target"
   - Returns: 4x4 transformation matrix
 
 ## File Format Support

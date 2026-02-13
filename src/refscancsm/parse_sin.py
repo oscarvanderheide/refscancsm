@@ -6,7 +6,7 @@ import numpy as np
 
 
 def get_mps_to_xyz_transform(
-    sin_file_path: str, scan_type: str, location_idx: int = 1
+    sin_file_path: str, scan_type: str
 ) -> np.ndarray:
     """
     TODO
@@ -17,8 +17,8 @@ def get_mps_to_xyz_transform(
     # Getting the translation and linear transformation components from the .sin file
     # is the same for both the refscan and target scans, but the way we build the final
     # affine transformation matrix differs based on the scan type (due to Philips-specific conventions).
-    translation = _get_mps_to_xyz_translation_part(sin_file_path, location_idx)
-    linear_part = _get_mps_to_xyz_linear_part(sin_file_path, location_idx)
+    translation = _get_mps_to_xyz_translation_part(sin_file_path)
+    linear_part = _get_mps_to_xyz_linear_part(sin_file_path)
 
     # if scan_type == "refscan":
     # translation = translation[[2, 0, 1]]
@@ -182,7 +182,7 @@ def get_matrix_size(sin_file_path: str, scan_type: str) -> np.ndarray:
     raise ValueError(f"Could not find {search_key} in file {sin_file_path}")
 
 
-def _get_mps_to_xyz_linear_part(sin_file_path: str, location_idx: int) -> np.ndarray:
+def _get_mps_to_xyz_linear_part(sin_file_path: str) -> np.ndarray:
     """
     Parse .sin file to extract the linear transformation part (scaling/rotation) of the
     affine transformation matrix that is used to map array indices to world coordinates.
@@ -191,8 +191,6 @@ def _get_mps_to_xyz_linear_part(sin_file_path: str, location_idx: int) -> np.nda
     ----------
     sin_file_path : str
         Path to .sin file
-    location_idx : int
-        Location index to extract
 
     Returns
     -------
@@ -203,7 +201,7 @@ def _get_mps_to_xyz_linear_part(sin_file_path: str, location_idx: int) -> np.nda
     linear_transformation = []
     # Patterns to match location data in .sin file
     patterns = [
-        f" 01 {i:02d} {location_idx:02d}: location_matrices" for i in range(1, 4)
+        f" 01 {i:02d} 01: location_matrices" for i in range(1, 4)
     ]
 
     with open(sin_file_path, "r") as f:
@@ -218,14 +216,14 @@ def _get_mps_to_xyz_linear_part(sin_file_path: str, location_idx: int) -> np.nda
     # Validate that we found all required data
     if len(linear_transformation) != 3:
         raise ValueError(
-            f"Could not find complete linear transformation data in {sin_file_path} for location {location_idx:02d}. "
+            f"Could not find complete linear transformation data in {sin_file_path}. "
         )
 
     return np.array(linear_transformation)
 
 
 def _get_mps_to_xyz_translation_part(
-    sin_file_path: str, location_idx: int
+    sin_file_path: str
 ) -> np.ndarray:
     """
     Parse .sin file to extract the translation part of the affine transformation matrix that is used to map
@@ -235,8 +233,6 @@ def _get_mps_to_xyz_translation_part(
     ----------
     sin_file_path : str
         Path to .sin file
-    location_idx : int
-        Location index to extract
 
     Returns
     -------
@@ -245,7 +241,7 @@ def _get_mps_to_xyz_translation_part(
     """
     translation = None
     # Pattern to match location data in .sin file
-    pattern = f" 01 00 {location_idx:02d}: location_center_coordinates"
+    pattern = f" 01 00 01: location_center_coordinates"
 
     with open(sin_file_path, "r") as f:
         for line in f:
@@ -258,7 +254,7 @@ def _get_mps_to_xyz_translation_part(
     # Validate that we found all required data
     if translation is None:
         raise ValueError(
-            f"Could not find translation data in {sin_file_path} for location {location_idx:02d}. "
+            f"Could not find translation data in {sin_file_path}. "
         )
 
     return translation
