@@ -3,8 +3,8 @@
 from pathlib import Path
 
 import numpy as np
-from tqdm import tqdm
 from scipy.ndimage import map_coordinates
+from tqdm import tqdm
 
 from .parse_cpx import read_cpx
 from .parse_sin import (
@@ -66,18 +66,11 @@ def get_csm(
     # Load low-resolution coil maps from SENSE refscan (exported as .cpx)
     refscan_coil_imgs = _load_refscan(refscan_cpx_path, squeeze=squeeze)
 
-    # Affine transformation that maps refscan array indices to world coordinates
-    refscan_idx_to_xyz = _load_idx_to_xyz_transformation(
-        sin_path_refscan, "refscan", location_idx
+    # Load affine transformation matrix that maps indices in the target array
+    # to indices in the refscan array
+    target_idx_to_refscan_idx = _load_idx_to_idx_transformation(
+        sin_path_refscan, sin_path_target
     )
-
-    # Affine transformation that maps target array indices to world coordinates
-    target_idx_to_xyz = _load_idx_to_xyz_transformation(
-        sin_path_target, "target", location_idx
-    )
-
-    # Affine transformation that maps target array indices to refscan array indices
-    target_idx_to_refscan_idx = np.linalg.inv(refscan_idx_to_xyz) @ target_idx_to_xyz
 
     matrix_size_target = get_matrix_size(sin_path_target, "target")
 
@@ -174,15 +167,35 @@ def _load_refscan(cpx_path: str, squeeze: bool = True):
     return csm
 
 
+def _load_idx_to_idx_transformation(
+    sin_path_refscan: str, sin_path_target: str, location_idx: int
+):
+    """Affine transformation that maps refscan array indices to world coordinates."""
+
+    # Affine transformation that maps refscan array indices to world coordinates
+    refscan_idx_to_xyz = _load_idx_to_xyz_transformation(
+        sin_path_refscan, "refscan", location_idx
+    )
+
+    # Affine transformation that maps target array indices to world coordinates
+    target_idx_to_xyz = _load_idx_to_xyz_transformation(
+        sin_path_target, "target", location_idx
+    )
+
+    # Affine transformation that maps target array indices to refscan array indices
+    target_idx_to_refscan_idx = np.linalg.inv(refscan_idx_to_xyz) @ target_idx_to_xyz
+
+    return target_idx_to_refscan_idx
+
+
 def _load_idx_to_xyz_transformation(sin_path: str, scan_type: str, location_idx: int):
     """Load transformation from array indices to world coordinates for a given scan."""
+
+    # Affine transformation that array indices to MPS
     idx_to_mps = get_idx_to_mps_transform(sin_path, scan_type)
-
-    print(idx_to_mps)
-
+    # Affine transformation that maps MPS to world coordinates
     mps_to_xyz = get_mps_to_xyz_transform(sin_path, scan_type, location_idx)
-
-    print(mps_to_xyz)
+    # Multiplty the matrices to get idx to world coordinates transformation
     idx_to_xyz = mps_to_xyz @ idx_to_mps
 
     return idx_to_xyz
