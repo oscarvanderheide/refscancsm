@@ -24,10 +24,10 @@ def get_mps_to_xyz_transform(
     # translation = translation[[2, 0, 1]]
     # linear_part = linear_part[:, [2, 0, 1]]
 
-    if scan_type == "target":
-        linear_part[0, :] *= -1
-        linear_part[1, :] *= -1
-        translation[2] *= -1
+    # if scan_type == "target":
+    #     linear_part[0, :] *= -1
+    #     linear_part[1, :] *= -1
+    #     translation[2] *= -1
 
     # Build 4x4 matrix:
     # [ rotation | translation]
