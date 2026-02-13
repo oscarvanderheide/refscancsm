@@ -9,6 +9,9 @@ wheels/
 # Virtual environments
 .venv
 
+# Test stuff
+test.py
+test_data/
 *.npy
 *.npz
 *.mat
