@@ -4,7 +4,7 @@ from tqdm import tqdm
 from scipy.ndimage import filters
 
 
-def walsh_csm(img, smoothing=5, niter=10, use_mask=True, mask_threshold=0.05):
+def walsh_csm(img, smoothing=5, niter=10, use_mask=True, mask_threshold=0.005):
     """Calculates the coil sensitivities for 2D or 3D data using an iterative version of the Walsh method
 
     :param img: Input images, ``[coil, y, x]`` or ``[coil, z, y, x]``
