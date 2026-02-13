@@ -30,8 +30,8 @@ dependencies = [
 get_csm = "refscancsm.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/yourusername/refscancsm"
-Repository = "https://github.com/yourusername/refscancsm"
+Homepage = "https://github.com/oscarvanderheide/refscancsm"
+Repository = "https://github.com/oscarvanderheide/refscancsm"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/refscancsm"]
