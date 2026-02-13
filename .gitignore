@@ -11,7 +11,7 @@ wheels/
 
 # Test stuff
 test.py
-test_data/
+test_data
 *.npy
 *.npz
 *.mat
