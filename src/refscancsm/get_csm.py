@@ -12,7 +12,10 @@ from .parse_sin import (
     get_matrix_size,
     get_mps_to_xyz_transform,
 )
-from .walsh import walsh_csm
+
+from .espirit import espirit, fft3c
+# from src.refscancsm import walsh
+# from 
 
 
 def get_csm(
@@ -80,7 +83,9 @@ def get_csm(
     )
 
     # For fully-sampled data, ESPIRIT can be simplified to the Walsh method for estimating coil sensitivity maps.
-    csm = walsh_csm(interpolated_coil_imgs)
+    # csm = walsh_csm(interpolated_coil_imgs)
+    kspace_data = fft3c(interpolated_coil_imgs)  # Convert to k-space for ESPIRiT
+    csm = espirit(kspace_data)
 
     return csm
 

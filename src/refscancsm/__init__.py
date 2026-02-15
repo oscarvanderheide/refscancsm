@@ -19,6 +19,8 @@ from .parse_sin import (
 # Main workflow
 from .get_csm import get_csm
 
+from .espirit import espirit, fft3c
+
 __version__ = "0.1.0"
 
 __all__ = [
@@ -28,4 +30,6 @@ __all__ = [
     "get_matrix_size",
     "get_voxel_sizes",
     "get_csm",
+    "espirit",
+    "fft3c",
 ]
