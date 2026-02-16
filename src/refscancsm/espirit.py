@@ -15,8 +15,26 @@ Main steps:
 6. Post-processing (crop, phase rotation, normalization)
 """
 
+import os
+import time
+from concurrent.futures import ThreadPoolExecutor
+
 import numpy as np
 from scipy import linalg
+
+# Match BART's single precision (complex float). Set to np.complex128 for double.
+DEFAULT_DTYPE = np.complex64
+
+# Number of threads for parallelizing per-voxel eigendecomposition.
+# Set to 0 to auto-detect (uses cpu_count).
+NUM_THREADS = 0
+
+
+def _get_num_threads():
+    """Get the number of threads to use for parallel eigenmaps."""
+    if NUM_THREADS > 0:
+        return NUM_THREADS
+    return min(os.cpu_count() or 1, 16)
 
 
 def fftNc(x, axes=None):
@@ -121,6 +139,25 @@ def sinc_interp_1d(data, target_size, axis):
     result *= target_size / source_size
 
     return result
+
+
+def compute_sinc_matrix(n_in, n_out):
+    """
+    Precompute sinc interpolation matrix of shape (n_out, n_in).
+
+    M[i, j] is the weight of input sample j contributing to output sample i.
+    Equivalent to sinc_interp_1d but as a precomputed matrix for efficient
+    repeated application via matrix multiply (avoids FFT overhead).
+    """
+    if n_in == n_out:
+        return np.eye(n_in, dtype=complex)
+
+    M = np.zeros((n_out, n_in), dtype=complex)
+    for j in range(n_in):
+        e_j = np.zeros(n_in, dtype=complex)
+        e_j[j] = 1.0
+        M[:, j] = sinc_interp_1d(e_j, n_out, axis=0)
+    return M
 
 
 def extract_calib(kspace, calib_size):
@@ -422,26 +459,15 @@ def compute_image_covariance(img_kernels, kernel_size):
     print(f"    Dividing by kernel_vol/image_vol^2 = {normalization:.6e}")
     print("    (Accounts for BART's unnormalized IFFT + sinc_zeropad scaling)")
 
-    # Initialize covariance
-    cov_shape = spatial_shape + (n_coils, n_coils)
-    img_cov = np.zeros(cov_shape, dtype=complex)
-
-    # At each spatial location, compute H^H @ H and normalize
-    if n_dims == 2:
-        ny, nx = spatial_shape
-        for y in range(ny):
-            for x in range(nx):
-                H = img_kernels[:, :, y, x]  # [n_kernels, n_coils]
-                img_cov[y, x] = (H.conj().T @ H) / normalization
-    elif n_dims == 3:
-        nz, ny, nx = spatial_shape
-        for z in range(nz):
-            for y in range(ny):
-                for x in range(nx):
-                    H = img_kernels[:, :, z, y, x]  # [n_kernels, n_coils]
-                    img_cov[z, y, x] = (H.conj().T @ H) / normalization
-    else:
-        raise ValueError(f"Only 2D and 3D supported, got {n_dims}D")
+    # Compute H^H @ H for all spatial locations at once using einsum.
+    # img_kernels: [n_kernels, n_coils, ...spatial...]
+    # We need: cov[..., i, j] = sum_k conj(H[k, i, ...]) * H[k, j, ...]
+    # Move spatial dims to front, coils to back:
+    #   H_t: [...spatial..., n_kernels, n_coils]
+    axes_order = list(range(2, 2 + n_dims)) + [0, 1]
+    H_t = np.transpose(img_kernels, axes_order)
+    # Batched outer product: H^H @ H at each spatial location
+    img_cov = np.einsum("...ki,...kj->...ij", H_t.conj(), H_t) / normalization
 
     return img_cov
 
@@ -712,21 +738,83 @@ def orthogonal_iteration(matrix, num_vecs, num_iter=30):
     return eigvals, vecs
 
 
-def eigenmaps_batched(img_cov, num_maps=1):
+def _orthiter_chunk(args):
     """
-    Batched eigendecomposition of covariance matrices using numpy.linalg.eigh.
+    Worker function for threaded orthogonal iteration.
+    Processes a chunk of flattened covariance matrices.
 
-    This is equivalent to BART's lapack_eig mode but vectorized over all
-    spatial positions at once for efficiency.
+    Parameters: (cov_chunk, num_maps, num_orthiter)
+        cov_chunk: [B, nc, nc] batch of Hermitian matrices
+        num_maps: number of eigenvectors to compute
+        num_orthiter: number of power iterations
+
+    Returns: (eigvecs, eigvals) where
+        eigvecs: [B, nc, num_maps]
+        eigvals: [B, num_maps]
+    """
+    cov_chunk, num_maps, num_orthiter = args
+    B, nc = cov_chunk.shape[0], cov_chunk.shape[1]
+
+    if num_maps == 1:
+        # Optimized path for single map: pure power iteration, no Gram-Schmidt
+        v = np.zeros((B, nc), dtype=cov_chunk.dtype)
+        v[:, 0] = 1.0
+        for _ in range(num_orthiter):
+            v = np.einsum("...ij,...j->...i", cov_chunk, v)
+            norm = np.linalg.norm(v, axis=-1, keepdims=True)
+            norm = np.where(norm > 1e-30, norm, 1.0)
+            v = v / norm
+        # Eigenvalue: v^H A v
+        Av = np.einsum("...ij,...j->...i", cov_chunk, v)
+        eigvals = np.real(np.sum(v.conj() * Av, axis=-1, keepdims=True))
+        return v[..., np.newaxis], eigvals  # [B, nc, 1], [B, 1]
+    else:
+        # General case: orthogonal iteration with Gram-Schmidt
+        vecs = np.zeros((B, nc, num_maps), dtype=cov_chunk.dtype)
+        for m in range(num_maps):
+            vecs[:, m % nc, m] = 1.0
+        for _ in range(num_orthiter):
+            # Batched matmul: [B, nc, nc] @ [B, nc, M] -> [B, nc, M]
+            vecs = np.einsum("...ij,...jk->...ik", cov_chunk, vecs)
+            # Gram-Schmidt
+            for m in range(num_maps):
+                v = vecs[..., m]  # [B, nc]
+                for j in range(m):
+                    u = vecs[..., j]  # [B, nc]
+                    proj = np.sum(u.conj() * v, axis=-1, keepdims=True)
+                    v = v - proj * u
+                norm = np.linalg.norm(v, axis=-1, keepdims=True)
+                norm = np.where(norm > 1e-30, norm, 1.0)
+                vecs[..., m] = v / norm
+        # Eigenvalues
+        Av = np.einsum("...ij,...jk->...ik", cov_chunk, vecs)
+        eigvals = np.real(np.sum(vecs.conj() * Av, axis=-2))
+        return vecs, eigvals  # [B, nc, M], [B, M]
+
+
+def eigenmaps_batched(img_cov, num_maps=1, orthiter=True, num_orthiter=30):
+    """
+    Batched eigendecomposition of covariance matrices.
+
+    Matches BART's eigenmaps() function which uses OpenMP to parallelize
+    across voxels. This Python version uses ThreadPoolExecutor + einsum
+    to achieve similar parallelism.
+
+    Performance optimizations vs naive implementation:
+    - Uses einsum for batched matrix-vector product (avoids extra dimension overhead)
+    - Splits work across threads (numpy releases GIL during C-level ops)
+    - For num_maps=1: simplified power iteration (no Gram-Schmidt needed)
 
     Parameters:
     -----------
     img_cov : ndarray
         Covariance matrices [...spatial..., n_coils, n_coils]
-        2D: [ny, nx, n_coils, n_coils]
-        3D: [nz, ny, nx, n_coils, n_coils]  (or a single 2D slice)
     num_maps : int
         Number of sensitivity maps to extract (default: 1)
+    orthiter : bool
+        Use orthogonal iteration (default: True, BART default)
+    num_orthiter : int
+        Number of iterations for orthiter (default: 30, BART default)
 
     Returns:
     --------
@@ -737,27 +825,106 @@ def eigenmaps_batched(img_cov, num_maps=1):
     """
     n_coils = img_cov.shape[-1]
     spatial_shape = img_cov.shape[:-2]
+    n_voxels = int(np.prod(spatial_shape))
+    dtype = img_cov.dtype
 
-    # Batched eigendecomposition (eigh returns eigenvalues in ascending order)
-    eigvals_all, eigvecs_all = np.linalg.eigh(img_cov)
+    if orthiter:
+        # Flatten spatial dims for chunked processing: [B, nc, nc]
+        cov_flat = img_cov.reshape(n_voxels, n_coils, n_coils)
 
-    # Extract top num_maps eigenvectors (largest eigenvalues = last indices)
-    sens_maps = np.zeros((num_maps, n_coils) + spatial_shape, dtype=complex)
-    eigenvalues = np.zeros((num_maps,) + spatial_shape)
+        nthreads = _get_num_threads()
+        if nthreads > 1 and n_voxels > 256:
+            # Split into chunks and process in parallel
+            # (mirrors BART's #pragma omp parallel for collapse(3) in eigenmaps)
+            chunks = np.array_split(cov_flat, nthreads)
+            with ThreadPoolExecutor(max_workers=nthreads) as executor:
+                results = list(
+                    executor.map(
+                        _orthiter_chunk,
+                        [(c, num_maps, num_orthiter) for c in chunks],
+                    )
+                )
+            all_vecs = np.concatenate([r[0] for r in results], axis=0)
+            all_vals = np.concatenate([r[1] for r in results], axis=0)
+        else:
+            # Single-threaded
+            all_vecs, all_vals = _orthiter_chunk((cov_flat, num_maps, num_orthiter))
 
-    for m in range(num_maps):
-        idx = -(m + 1)  # -1 = largest, -2 = second largest, etc.
-        eigvec = eigvecs_all[..., idx]  # [...spatial..., n_coils]
-        eigval = eigvals_all[..., idx]  # [...spatial...]
+        # Reshape back: [B, nc, M] -> [M, nc, ...spatial...]
+        all_vecs = all_vecs.reshape(spatial_shape + (n_coils, num_maps))
+        all_vals = all_vals.reshape(spatial_shape + (num_maps,))
 
-        # Move coils axis from last position to first (after maps dim)
-        sens_maps[m] = np.moveaxis(eigvec, -1, 0)
-        eigenvalues[m] = eigval
+        sens_maps = np.zeros((num_maps, n_coils) + spatial_shape, dtype=dtype)
+        eigenvalues = np.zeros((num_maps,) + spatial_shape)
+        for m in range(num_maps):
+            sens_maps[m] = np.moveaxis(all_vecs[..., m], -1, 0)
+            eigenvalues[m] = all_vals[..., m]
+
+    else:
+        # Full eigendecomposition via LAPACK
+        eigvals_all, eigvecs_all = np.linalg.eigh(img_cov)
+
+        sens_maps = np.zeros((num_maps, n_coils) + spatial_shape, dtype=dtype)
+        eigenvalues = np.zeros((num_maps,) + spatial_shape)
+
+        for m in range(num_maps):
+            idx = -(m + 1)
+            sens_maps[m] = np.moveaxis(eigvecs_all[..., idx], -1, 0)
+            eigenvalues[m] = eigvals_all[..., idx]
 
     return sens_maps, eigenvalues
 
 
-def caltwo(img_cov, target_shape, num_maps=1):
+def _process_zslice(args):
+    """
+    Process a single z-slice: sinc-resize y,x + eigenmaps.
+    Designed to be called from a process pool or directly.
+
+    Parameters: tuple (z, slc_z, M_y, M_x, ny, nx, ny_s, nx_s, nc,
+                        cosize, tri_i, tri_j, num_maps, orthiter, num_orthiter, dtype)
+    Returns: (z, sens_slice, eig_slice)
+    """
+    (
+        z,
+        slc_z,
+        M_y,
+        M_x,
+        ny,
+        nx,
+        ny_s,
+        nx_s,
+        nc,
+        cosize,
+        tri_i,
+        tri_j,
+        num_maps,
+        orthiter,
+        num_orthiter,
+        dtype,
+    ) = args
+
+    # Resize packed slice along y via GEMM
+    slc = (M_y @ slc_z.reshape(ny_s, -1)).reshape(ny, nx_s, cosize)
+
+    # Resize packed slice along x via GEMM
+    slc = (
+        (M_x @ slc.transpose(1, 0, 2).reshape(nx_s, -1))
+        .reshape(nx, ny, cosize)
+        .transpose(1, 0, 2)
+    )  # (ny, nx, cosize)
+
+    # Unpack triangle to full Hermitian matrix
+    cov_full = np.zeros((ny, nx, nc, nc), dtype=dtype)
+    cov_full[..., tri_i, tri_j] = slc
+    cov_full[..., tri_j, tri_i] = slc.conj()
+
+    # Eigenmaps for this slice (full ny×nx at once)
+    s, e = eigenmaps_batched(cov_full, num_maps, orthiter, num_orthiter)
+
+    return z, s, e
+
+
+def caltwo(img_cov, target_shape, num_maps=1, orthiter=True, num_orthiter=30):
     """
     Resize covariance to full resolution and compute eigenmaps.
 
@@ -779,6 +946,10 @@ def caltwo(img_cov, target_shape, num_maps=1):
         Full-resolution spatial shape
     num_maps : int
         Number of sensitivity maps
+    orthiter : bool
+        Use orthogonal iteration (default: True, BART default)
+    num_orthiter : int
+        Number of orthiter iterations (default: 30)
 
     Returns:
     --------
@@ -787,6 +958,7 @@ def caltwo(img_cov, target_shape, num_maps=1):
     """
     n_coils = img_cov.shape[-1]
     n_dims = img_cov.ndim - 2
+    dtype = img_cov.dtype
 
     if n_dims == 2:
         ny, nx = target_shape
@@ -796,40 +968,97 @@ def caltwo(img_cov, target_shape, num_maps=1):
         print(f"  Full-res covariance shape: {cov_full.shape}")
 
         # Batched eigenmaps at full resolution
-        sens_maps, eigenvalues = eigenmaps_batched(cov_full, num_maps)
+        sens_maps, eigenvalues = eigenmaps_batched(
+            cov_full, num_maps, orthiter, num_orthiter
+        )
         return sens_maps, eigenvalues
 
     elif n_dims == 3:
         nz, ny, nx = target_shape
         nz_s, ny_s, nx_s = img_cov.shape[:3]
+        nc = n_coils
 
-        # Step A: sinc-resize covariance along z
-        print(f"  Step A: Resizing covariance along z ({nz_s} → {nz})...")
-        cov_z = sinc_interp_1d(img_cov, nz, axis=0)
-        # cov_z shape: [nz, ny_s, nx_s, n_coils, n_coils]
+        # Pack covariance to upper triangle (like BART) — ~2× less data to interpolate
+        cosize = nc * (nc + 1) // 2
+        cov_packed = np.zeros((nz_s, ny_s, nx_s, cosize), dtype=dtype)
+        idx = 0
+        tri_i = np.zeros(cosize, dtype=int)
+        tri_j = np.zeros(cosize, dtype=int)
+        for i in range(nc):
+            for j in range(i + 1):
+                cov_packed[..., idx] = img_cov[..., i, j]
+                tri_i[idx] = i
+                tri_j[idx] = j
+                idx += 1
+        print(
+            f"  Packed covariance: {img_cov.shape} -> {cov_packed.shape} ({cosize} vs {nc * nc} elements/voxel)"
+        )
+
+        # Precompute sinc interpolation matrices
+        M_z = compute_sinc_matrix(nz_s, nz)
+        M_y = compute_sinc_matrix(ny_s, ny)
+        M_x = compute_sinc_matrix(nx_s, nx)
+        print(
+            f"  Precomputed interpolation matrices: z({nz},{nz_s}) y({ny},{ny_s}) x({nx},{nx_s})"
+        )
+
+        # Cast interpolation matrices to working dtype
+        M_z = M_z.astype(dtype)
+        M_y = M_y.astype(dtype)
+        M_x = M_x.astype(dtype)
+
+        # Step A: sinc-resize packed covariance along z
+        print(f"  Step A: Resizing packed covariance along z ({nz_s} -> {nz})...")
+        cov_z = (M_z @ cov_packed.reshape(nz_s, -1)).reshape(nz, ny_s, nx_s, cosize)
         mem_mb = cov_z.nbytes / 1e6
-        print(f"    z-resized covariance: {cov_z.shape} ({mem_mb:.0f} MB)")
+        print(f"    z-resized packed covariance: {cov_z.shape} ({mem_mb:.0f} MB)")
 
-        # Step B: process each z-slice
-        print(f"  Step B: Processing {nz} z-slices (resize y,x + eigenmaps)...")
-        sens_maps = np.zeros((num_maps, n_coils, nz, ny, nx), dtype=complex)
+        # Step B: process each z-slice (full slice at once)
+        nthreads = _get_num_threads()
+        print(
+            f"  Step B: Processing {nz} z-slices (resize y,x + eigenmaps, "
+            f"{nthreads} threads for eigenmaps)..."
+        )
+        sens_maps = np.zeros((num_maps, nc, nz, ny, nx), dtype=dtype)
         eigenvalues = np.zeros((num_maps, nz, ny, nx))
 
+        t0 = time.perf_counter()
         for z in range(nz):
-            if z % 20 == 0 or z == nz - 1:
-                print(f"    Slice {z + 1}/{nz}...")
+            t_slice = time.perf_counter()
 
-            # Resize this slice along y and x
-            cov_slice = cov_z[z]  # [ny_s, nx_s, n_coils, n_coils]
-            cov_slice = sinc_interp_1d(cov_slice, ny, axis=0)
-            cov_slice = sinc_interp_1d(cov_slice, nx, axis=1)
-            # cov_slice shape: [ny, nx, n_coils, n_coils]
+            # Resize packed slice along y via GEMM
+            slc = cov_z[z]  # (ny_s, nx_s, cosize)
+            slc = (M_y @ slc.reshape(ny_s, -1)).reshape(ny, nx_s, cosize)
 
-            # Batched eigenmaps for this slice
-            s, e = eigenmaps_batched(cov_slice, num_maps)
+            # Resize packed slice along x via GEMM
+            slc = (
+                (M_x @ slc.transpose(1, 0, 2).reshape(nx_s, -1))
+                .reshape(nx, ny, cosize)
+                .transpose(1, 0, 2)
+            )  # (ny, nx, cosize)
+
+            # Unpack triangle to full Hermitian matrix
+            cov_full = np.zeros((ny, nx, nc, nc), dtype=dtype)
+            cov_full[..., tri_i, tri_j] = slc
+            cov_full[..., tri_j, tri_i] = slc.conj()
+
+            # Eigenmaps for this slice (threaded internally)
+            s, e = eigenmaps_batched(cov_full, num_maps, orthiter, num_orthiter)
+
             sens_maps[:, :, z] = s
             eigenvalues[:, z] = e
 
+            t_total_slice = time.perf_counter() - t_slice
+            elapsed = time.perf_counter() - t0
+            eta = elapsed / (z + 1) * (nz - z - 1) if z < nz - 1 else 0
+            if (z + 1) % 10 == 0 or z == 0 or z == nz - 1:
+                print(
+                    f"    Slice {z + 1}/{nz}: {t_total_slice:.2f}s "
+                    f"[{elapsed:.1f}s elapsed, ~{eta:.0f}s left]"
+                )
+
+        elapsed = time.perf_counter() - t0
+        print(f"    Completed in {elapsed:.1f}s")
         return sens_maps, eigenvalues
 
     else:
@@ -1165,6 +1394,9 @@ def espirit(
     spatial_shape = kspace.shape[1:]
     n_dims = len(spatial_shape)
 
+    # Cast to working dtype (BART uses complex float = complex64)
+    kspace = kspace.astype(DEFAULT_DTYPE)
+
     # Auto-detect or expand calib_size
     if calib_size is None:
         calib_size = tuple([24] * n_dims)
@@ -1184,13 +1416,17 @@ def espirit(
     print("=" * 70)
     print(f"ESPIRiT Calibration ({n_dims}D)")
     print("=" * 70)
-    print(f"Input k-space shape: {kspace.shape}")
+    print(f"Input k-space shape: {kspace.shape}, dtype: {kspace.dtype}")
     print(f"Calibration size: {calib_size}")
     print(f"Kernel size: {kernel_size}")
     print(f"Number of maps: {num_maps}")
+    print(f"Threads: {_get_num_threads()}")
     print()
 
+    t_total = time.perf_counter()
+
     # Step 1: Extract calibration region
+    t0 = time.perf_counter()
     print("Step 1: Extracting calibration region...")
     calib_data = extract_calib(kspace, calib_size)
     print(f"  Calibration region shape: {calib_data.shape}")
@@ -1200,16 +1436,20 @@ def espirit(
     print(
         f"  Calib magnitude - mean: {np.mean(np.abs(calib_data)):.2e}, max: {np.max(np.abs(calib_data)):.2e}"
     )
+    print(f"  [Step 1: {time.perf_counter() - t0:.2f}s]")
 
     # Step 2: Build calibration matrix
+    t0 = time.perf_counter()
     print("\nStep 2: Building calibration matrix...")
     cal_matrix = build_calibration_matrix(calib_data, kernel_size)
     print(f"  Calibration matrix shape: {cal_matrix.shape}")
     print(
         f"  Calmat magnitude - mean: {np.mean(np.abs(cal_matrix)):.2e}, max: {np.max(np.abs(cal_matrix)):.2e}"
     )
+    print(f"  [Step 2: {time.perf_counter() - t0:.2f}s]")
 
     # Step 3: Compute ESPIRiT kernels (signal space) via eigendecomposition
+    t0 = time.perf_counter()
     print(
         "\nStep 3: Computing ESPIRiT kernels via eigendecomposition of Gram matrix..."
     )
@@ -1218,8 +1458,10 @@ def espirit(
     )
     kernels, svals = compute_kernels_svd(cal_matrix, threshold=threshold)
     print(f"  Kernel shape: {kernels.shape}")
+    print(f"  [Step 3: {time.perf_counter() - t0:.2f}s]")
 
     # Step 4: Transform kernels to image domain
+    t0 = time.perf_counter()
     print("\nStep 4: Transforming kernels to image domain...")
     # Standard: 2x kernel size in each dimension
     img_size = tuple(2 * k for k in kernel_size)
@@ -1228,14 +1470,17 @@ def espirit(
     print(
         f"  Img kernel magnitude - mean: {np.mean(np.abs(img_kernels)):.2e}, max: {np.max(np.abs(img_kernels)):.2e}"
     )
+    print(f"  [Step 4: {time.perf_counter() - t0:.2f}s]")
 
     # Step 5: Compute image-space covariance (at low resolution)
+    t0 = time.perf_counter()
     print("\nStep 5: Computing image-space covariance matrices...")
     img_cov = compute_image_covariance(img_kernels, kernel_size)
     print(f"  Covariance shape: {img_cov.shape}")
     print(
         f"  Covariance magnitude - mean: {np.mean(np.abs(img_cov)):.2e}, max: {np.max(np.abs(img_cov)):.2e}"
     )
+    print(f"  [Step 5: {time.perf_counter() - t0:.2f}s]")
 
     # Steps 6-7: Resize covariance to full resolution, then eigenmaps
     # This matches BART's caltwo() approach:
@@ -1244,13 +1489,22 @@ def espirit(
     # For 3D, BART uses econdim to process one z-slice at a time (memory efficient).
     # This avoids Gibbs ringing artifacts that would occur if we resized sensitivity
     # maps instead of the covariance.
+    t0 = time.perf_counter()
     print("\nSteps 6-7: Resize covariance to full resolution + eigenmaps...")
     print(f"  Target shape: {spatial_shape}")
-    sens_maps, eigenvalues = caltwo(img_cov, spatial_shape, num_maps=num_maps)
+    sens_maps, eigenvalues = caltwo(
+        img_cov,
+        spatial_shape,
+        num_maps=num_maps,
+        orthiter=orthiter,
+        num_orthiter=num_orthiter,
+    )
     print(f"  Sensitivity maps shape: {sens_maps.shape}")
     print(f"  Eigenvalue range: [{np.min(eigenvalues):.6f}, {np.max(eigenvalues):.6f}]")
+    print(f"  [Steps 6-7: {time.perf_counter() - t0:.2f}s]")
 
     # Step 8: Post-processing
+    t0 = time.perf_counter()
     print("\nStep 8: Post-processing...")
 
     # Debug: check sensitivity maps before cropping
@@ -1292,8 +1546,10 @@ def espirit(
         )
         print(f"    Non-zero fraction: {np.mean(sens_mag > 1e-10):.3f}")
 
+    print(f"  [Step 8: {time.perf_counter() - t0:.2f}s]")
+
     print("\n" + "=" * 70)
-    print("ESPIRiT calibration complete!")
+    print(f"ESPIRiT calibration complete! Total: {time.perf_counter() - t_total:.2f}s")
     print("=" * 70)
 
     info = {
