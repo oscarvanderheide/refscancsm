@@ -833,15 +833,15 @@ def espirit(
     print(f"ESPIRiT calibration complete! Total: {time.perf_counter() - t_total:.2f}s")
     print("=" * 70)
 
-    info = {
-        "eigenvalues": eigenvalues,
-        "mask": mask,
-        "svals": svals,
-        "img_cov": img_cov,
-        "kernels": kernels,
-    }
+    # info = {
+    #     "eigenvalues": eigenvalues,
+    #     "mask": mask,
+    #     "svals": svals,
+    #     "img_cov": img_cov,
+    #     "kernels": kernels,
+    # }
 
-    return sens_maps, info
+    return sens_maps
 
 
 if __name__ == "__main__":
