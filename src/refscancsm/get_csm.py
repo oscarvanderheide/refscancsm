@@ -6,6 +6,7 @@ import numpy as np
 from scipy.ndimage import map_coordinates
 from tqdm import tqdm
 
+from .espirit import espirit, fft3c
 from .parse_cpx import read_cpx
 from .parse_sin import (
     get_idx_to_mps_transform,
@@ -13,9 +14,14 @@ from .parse_sin import (
     get_mps_to_xyz_transform,
 )
 
-from .espirit import espirit, fft3c
-# from src.refscancsm import walsh
-# from 
+try:
+    import cupy as cp
+    from cupyx.scipy.ndimage import map_coordinates as map_coordinates_gpu
+
+    HAVE_CUPY = True
+except ImportError:
+    cp = None
+    HAVE_CUPY = False
 
 
 def get_csm(
@@ -75,7 +81,7 @@ def get_csm(
     matrix_size_target = get_matrix_size(sin_path_target, "target")
 
     # Regrid refscan to target geometry
-    interpolated_coil_imgs = _interpolate_to_target_geometry(
+    interpolated_coil_imgs = interpolate_to_target_geometry(
         refscan_coil_imgs,
         target_idx_to_refscan_idx,
         matrix_size_target,
@@ -84,7 +90,8 @@ def get_csm(
 
     # For fully-sampled data, ESPIRIT can be simplified to the Walsh method for estimating coil sensitivity maps.
     # csm = walsh_csm(interpolated_coil_imgs)
-    kspace_data = fft3c(interpolated_coil_imgs)  # Convert to k-space for ESPIRiT
+    print("Converting interpolated images to k-space for ESPIRiT")
+    kspace_data = fft3c(interpolated_coil_imgs)
     csm = espirit(kspace_data)
 
     return csm
@@ -169,20 +176,14 @@ def _load_refscan(cpx_path: str, squeeze: bool = True):
     return csm
 
 
-def _load_idx_to_idx_transformation(
-    sin_path_refscan: str, sin_path_target: str
-):
+def _load_idx_to_idx_transformation(sin_path_refscan: str, sin_path_target: str):
     """Affine transformation that maps refscan array indices to world coordinates."""
 
     # Affine transformation that maps refscan array indices to world coordinates
-    refscan_idx_to_xyz = _load_idx_to_xyz_transformation(
-        sin_path_refscan, "refscan"
-    )
+    refscan_idx_to_xyz = _load_idx_to_xyz_transformation(sin_path_refscan, "refscan")
 
     # Affine transformation that maps target array indices to world coordinates
-    target_idx_to_xyz = _load_idx_to_xyz_transformation(
-        sin_path_target, "target"
-    )
+    target_idx_to_xyz = _load_idx_to_xyz_transformation(sin_path_target, "target")
 
     # Affine transformation that maps target array indices to refscan array indices
     target_idx_to_refscan_idx = np.linalg.inv(refscan_idx_to_xyz) @ target_idx_to_xyz
@@ -203,7 +204,37 @@ def _load_idx_to_xyz_transformation(sin_path: str, scan_type: str):
     return idx_to_xyz
 
 
-def _interpolate_to_target_geometry(
+def interpolate_to_target_geometry(
+    refscan_imgs,
+    target_to_refscan_transform,
+    target_shape,
+    interpolation_order: int,
+    use_gpu=True,
+):
+    """
+    Wrapper to choose between CPU and GPU interpolation.
+    """
+    if use_gpu and HAVE_CUPY:
+        try:
+            return _interpolate_to_target_geometry_gpu(
+                refscan_imgs,
+                target_to_refscan_transform,
+                target_shape,
+                interpolation_order,
+            )
+        except Exception as e:
+            print(
+                f"GPU Interpolation failed (likely OOM). Falling back to CPU. Error: {e}"
+            )
+            # Fallthrough to CPU
+
+    # Fallback to your original CPU function
+    return _interpolate_to_target_geometry_cpu(
+        refscan_imgs, target_to_refscan_transform, target_shape, interpolation_order
+    )
+
+
+def _interpolate_to_target_geometry_cpu(
     refscan_imgs, target_to_refscan_transform, target_shape, interpolation_order: int
 ):
     """Interpolate refscan images to target geometry."""
@@ -271,3 +302,105 @@ def _interpolate_to_target_geometry(
     print(f"      Output shape: {interpolated_imgs.shape} [ncoils, nz, ny, nx]")
 
     return interpolated_imgs
+
+
+def _interpolate_to_target_geometry_gpu(
+    refscan_imgs, target_to_refscan_transform, target_shape, interpolation_order: int
+):
+    """
+    GPU-Accelerated interpolation of refscan images to target geometry.
+    """
+    print("\n  [GPU] Interpolating...")
+
+    # 1. Setup Data on GPU
+    ncoils = refscan_imgs.shape[0]
+    # Ensure complex64 for speed/memory
+    refscan_gpu = cp.asarray(refscan_imgs.astype(np.complex64))
+
+    # Transform matrix to GPU (float32 is usually sufficient for coords)
+    transform_gpu = cp.asarray(target_to_refscan_transform.astype(np.float32))
+
+    target_shape_tuple = tuple(target_shape.astype(int))
+    nx, ny, nz = target_shape_tuple
+
+    # 2. Generate Coordinates directly on GPU
+    # This avoids moving massive coordinate arrays from CPU to GPU
+    Z, Y, X = cp.meshgrid(
+        cp.arange(nz, dtype=cp.float32),
+        cp.arange(ny, dtype=cp.float32),
+        cp.arange(nx, dtype=cp.float32),
+        indexing="ij",
+    )
+
+    # Flip indices (matching your CPU logic)
+    X = (nx - 1) - X
+    Y = (ny - 1) - Y
+    Z = (nz - 1) - Z
+
+    # Stack: [X, Y, Z] -> (nz, ny, nx, 3)
+    # We flatten immediately to (N_total, 3) for matrix multiplication
+    target_coords_flat = cp.stack([X, Y, Z], axis=-1).reshape(-1, 3)
+
+    # Homogeneous coordinates: Add column of 1s
+    # Shape: (N_total, 4)
+    ones_col = cp.ones((target_coords_flat.shape[0], 1), dtype=cp.float32)
+    target_coords_homogeneous = cp.concatenate([target_coords_flat, ones_col], axis=1)
+
+    # 3. Apply Transform
+    # (Transform @ Coords.T).T  -> Shape (N_total, 4)
+    refscan_coords_flat = (transform_gpu @ target_coords_homogeneous.T).T
+
+    # 4. Prepare Coordinates for map_coordinates
+    # We need shape (3, N_total) or (3, nz, ny, nx)
+    # Order must be [S_idx, P_idx, M_idx] -> [Axis 2, Axis 1, Axis 0] of the result
+
+    # Extract columns 2, 1, 0 corresponding to Z, Y, X (S, P, M)
+    coords_for_interp = cp.stack(
+        [
+            refscan_coords_flat[:, 2],  # S (Slice/Z)
+            refscan_coords_flat[:, 1],  # P (Phase/Y)
+            refscan_coords_flat[:, 0],  # M (Freq/X)
+        ],
+        axis=0,
+    )
+
+    # Reshape to (3, nz, ny, nx) so map_coordinates outputs the correct shape automatically
+    coords_for_interp = coords_for_interp.reshape(3, nz, ny, nx)
+
+    # 5. Perform Interpolation
+    interpolated_imgs_gpu = cp.zeros((ncoils, nz, ny, nx), dtype=cp.complex64)
+
+    # Loop over coils (processing one 3D volume at a time is memory efficient)
+    for coil_idx in range(ncoils):
+        # Extract real/imag
+        real_in = refscan_gpu[coil_idx].real
+        imag_in = refscan_gpu[coil_idx].imag
+
+        # Interpolate Real
+        real_out = map_coordinates_gpu(
+            real_in,
+            coords_for_interp,
+            order=interpolation_order,
+            mode="constant",
+            cval=0.0,
+        )
+
+        # Interpolate Imag
+        imag_out = map_coordinates_gpu(
+            imag_in,
+            coords_for_interp,
+            order=interpolation_order,
+            mode="constant",
+            cval=0.0,
+        )
+
+        interpolated_imgs_gpu[coil_idx] = real_out + 1j * imag_out
+
+        # Optional: Print progress every few coils
+        if (coil_idx + 1) % 4 == 0:
+            print(f"      Interpolated coil {coil_idx + 1}/{ncoils}")
+
+    print("      ✓ GPU Interpolation complete!")
+
+    # 6. Move result back to CPU
+    return cp.asnumpy(interpolated_imgs_gpu)
