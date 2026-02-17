@@ -21,6 +21,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "cupy-cuda11x>=13.6.0",
     "numpy>=2.4.1",
     "scipy>=1.11.0",
     "tqdm>=4.67.3",
