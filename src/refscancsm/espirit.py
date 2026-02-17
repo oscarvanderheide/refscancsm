@@ -342,6 +342,69 @@ def compute_kernels_svd(cal_matrix, threshold=0.01, num_kernels=None):
     return kernels, svals
 
 
+def compute_kernels_svd_gpu(cal_matrix, threshold=0.01, num_kernels=None):
+    """
+    GPU-Accelerated computation of ESPIRiT kernels (No Batching).
+
+    Moves the entire calibration matrix to GPU and computes A^H @ A directly.
+    Fastest method if VRAM allows.
+    """
+    # 1. Move data to GPU
+    # Prefer complex64 for significant speedup on consumer GPUs
+    if cal_matrix.dtype == np.complex128 or cal_matrix.dtype == np.dtype("complex128"):
+        print("  Warning: Converting cal_matrix to complex64 for GPU speed")
+        cal_matrix_gpu = cp.asarray(cal_matrix, dtype=cp.complex64)
+    else:
+        cal_matrix_gpu = cp.asarray(cal_matrix)
+
+    # 2. Compute Gram matrix: A^H @ A
+    # This is the heavy O(N*M^2) operation
+    print("  GPU: Computing Gram matrix...")
+    gram_gpu = cal_matrix_gpu.conj().T @ cal_matrix_gpu
+
+    # 3. Eigendecomposition on GPU
+    # cp.linalg.eigh returns eigenvalues in ascending order
+    print("  GPU: Computing Eigendecomposition...")
+    w_gpu, v_gpu = cp.linalg.eigh(gram_gpu)
+
+    # 4. Move results back to CPU for sorting/thresholding
+    # The results (eigenvalues/vectors) are small, so CPU processing is fine here
+    eigenvalues = cp.asnumpy(w_gpu)
+    eigenvectors = cp.asnumpy(v_gpu)
+
+    # --- Standard CPU Post-Processing (Same as original) ---
+
+    # Sort by descending eigenvalue (largest first = signal space)
+    idx = np.argsort(eigenvalues)[::-1]
+    eigenvalues = eigenvalues[idx]
+    eigenvectors = eigenvectors[:, idx]
+
+    # Convert eigenvalues to singular values
+    svals = np.sqrt(np.abs(eigenvalues))
+
+    # Determine number of kernels to keep
+    if num_kernels is not None:
+        n_keep = num_kernels
+    else:
+        # BART thresholds as: val[i]/val[0] > sqrt(threshold)
+        max_sval = svals[0]
+        if max_sval > 1e-12:
+            n_keep = np.sum(svals / max_sval > np.sqrt(threshold))
+        else:
+            n_keep = 1
+
+    # Ensure at least 1 kernel
+    n_keep = max(1, n_keep)
+
+    print(f"  Keeping {n_keep} kernels (threshold: {threshold})")
+    print(f"  Singular value range: [{svals[n_keep - 1]:.6f}, {svals[0]:.6f}]")
+
+    # Extract signal space kernels (eigenvectors with LARGEST eigenvalues)
+    kernels = eigenvectors[:, :n_keep].T.conj()
+
+    return kernels, svals
+
+
 def kernels_to_image_domain(kernels, kernel_size, n_coils, img_size):
     """
     Transform kernels from k-space to image domain.
@@ -1654,7 +1717,7 @@ def espirit(
     print(
         "  (Computing A^H @ A and its eigenvectors - equivalent to SVD but more efficient)"
     )
-    kernels, svals = compute_kernels_svd(cal_matrix, threshold=threshold)
+    kernels, svals = compute_kernels_svd_gpu(cal_matrix, threshold=threshold)
     print(f"  Kernel shape: {kernels.shape}")
     print(f"  [Step 3: {time.perf_counter() - t0:.2f}s]")
 
