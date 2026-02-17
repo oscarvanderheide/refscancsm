@@ -19,6 +19,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+import cupy as cp
 import numpy as np
 from scipy import linalg
 
@@ -1065,6 +1066,203 @@ def caltwo(img_cov, target_shape, num_maps=1, orthiter=True, num_orthiter=30):
         raise ValueError(f"Only 2D and 3D supported, got {n_dims}D")
 
 
+def power_iteration_gpu(cov, num_iter=30):
+    """
+    Batched Power Iteration on GPU.
+    Finds the dominant eigenvector for thousands of matrices simultaneously.
+
+    Args:
+        cov: GPU array of shape (N_pixels, N_coils, N_coils)
+        num_iter: Number of iterations
+
+    Returns:
+        v: Dominant eigenvector (N_pixels, N_coils)
+        l: Dominant eigenvalue (N_pixels,)
+    """
+    n_pixels, n_coils, _ = cov.shape
+
+    # Determine the real floating point type corresponding to the complex input
+    if cov.dtype == np.complex64 or cov.dtype == np.dtype("complex64"):
+        real_dtype = np.float32
+    else:
+        real_dtype = np.float64
+
+    # 1. Initialize random vectors (N_pixels, N_coils, 1)
+    # Fix: Generate real and imaginary parts separately using float types
+    real_part = cp.random.randn(n_pixels, n_coils, 1, dtype=real_dtype)
+    imag_part = cp.random.randn(n_pixels, n_coils, 1, dtype=real_dtype)
+
+    v = real_part + 1j * imag_part
+
+    # Normalize initial guess
+    norm = cp.linalg.norm(v, axis=1, keepdims=True)
+    v = v / (norm + 1e-12)
+
+    # 2. Iteration Loop
+    for _ in range(num_iter):
+        # Batched Matrix-Vector Multiply: (N, Nc, Nc) @ (N, Nc, 1) -> (N, Nc, 1)
+        v = cp.matmul(cov, v)
+
+        # Normalize
+        norm = cp.linalg.norm(v, axis=1, keepdims=True)
+        v = v / (norm + 1e-12)
+
+    # 3. Compute Eigenvalue: Rayleigh Quotient (v^H A v) / (v^H v)
+    # Since v is normalized, denominator is 1. We just need v^H A v.
+    Av = cp.matmul(cov, v)
+
+    # Dot product: v_conj * Av. Sum over coils.
+    # v is (N, Nc, 1), Av is (N, Nc, 1)
+    eig_val = cp.sum(cp.conj(v) * Av, axis=1).real.reshape(n_pixels)
+
+    # Remove the dummy last dimension from v
+    eig_vec = v.reshape(n_pixels, n_coils)
+
+    return eig_vec, eig_val
+
+
+def caltwo_gpu(img_cov, target_shape, num_maps=1, orthiter=True, num_orthiter=30):
+    """
+    Highly Optimized GPU version of caltwo.
+
+    1. Processes one Z-slice at a time (Memory Safe for 44+ coils).
+    2. Uses Power Iteration (Compute Efficient for 1 map).
+    3. Performs all resizing and unpacking on GPU.
+    """
+    n_coils = img_cov.shape[-1]
+    n_dims = img_cov.ndim - 2
+    dtype = img_cov.dtype
+
+    # Force complex64. complex128 is 2x memory and often 32x slower on consumer GPUs.
+    if dtype == np.complex128 or dtype == np.dtype("complex128"):
+        print("  Warning: Converting to complex64 for GPU speed")
+        dtype = np.complex64
+        real_dtype = np.float32
+    elif dtype == np.complex64 or dtype == np.dtype("complex64"):
+        real_dtype = np.float32
+    else:
+        real_dtype = np.float64
+
+    if n_dims == 3:
+        nz, ny, nx = target_shape
+        nz_s, ny_s, nx_s = img_cov.shape[:3]
+        nc = n_coils
+
+        # --- PRE-CALCULATION (CPU) ---
+
+        # 1. Pack covariance to upper triangle (CPU)
+        # This reduces RAM usage by ~50% before we start processing
+        cosize = nc * (nc + 1) // 2
+        cov_packed = np.zeros((nz_s, ny_s, nx_s, cosize), dtype=dtype)
+
+        idx = 0
+        tri_i = np.zeros(cosize, dtype=int)
+        tri_j = np.zeros(cosize, dtype=int)
+        for i in range(nc):
+            for j in range(i + 1):
+                cov_packed[..., idx] = img_cov[..., i, j]
+                tri_i[idx] = i
+                tri_j[idx] = j
+                idx += 1
+
+        # 2. Precompute Sinc Matrices
+        M_z = compute_sinc_matrix(nz_s, nz).astype(dtype)
+        M_y_cpu = compute_sinc_matrix(ny_s, ny).astype(dtype)
+        M_x_cpu = compute_sinc_matrix(nx_s, nx).astype(dtype)
+
+        # 3. Resize Z-axis on CPU
+        # We do this on CPU because the full 3D volume (nz * ny * nx * nc^2)
+        # is likely too big for GPU VRAM.
+        print(f"  GPU Pipeline: Resizing Z on CPU ({nz_s} -> {nz})...")
+        cov_z = (M_z @ cov_packed.reshape(nz_s, -1)).reshape(nz, ny_s, nx_s, cosize)
+
+        # --- GPU SETUP ---
+
+        # Prepare Output Arrays (CPU)
+        sens_maps = np.zeros((num_maps, nc, nz, ny, nx), dtype=dtype)
+        eigenvalues = np.zeros((num_maps, nz, ny, nx), dtype=real_dtype)
+
+        # Move small constants to GPU
+        M_y_gpu = cp.asarray(M_y_cpu)
+        M_x_gpu = cp.asarray(M_x_cpu)
+        tri_i_gpu = cp.asarray(tri_i)
+        tri_j_gpu = cp.asarray(tri_j)
+
+        print(f"  GPU Pipeline: Processing {nz} slices using Power Iteration...")
+        t0 = time.perf_counter()
+
+        # --- SLICE LOOP ---
+        for z in range(nz):
+            # 1. Upload Slice to GPU
+            # Shape: (ny_s, nx_s, cosize) -> ~20MB for 44 coils
+            slc_gpu = cp.asarray(cov_z[z])
+
+            # 2. Resize Y (Batched Matmul)
+            # (ny_s, nx_s * cosize) -> (ny, nx_s * cosize)
+            slc_gpu = (M_y_gpu @ slc_gpu.reshape(ny_s, -1)).reshape(ny, nx_s, cosize)
+
+            # 3. Resize X (Batched Matmul)
+            # Transpose to (nx_s, ny, cosize) -> flatten -> mul -> reshape -> transpose back
+            slc_gpu = (
+                (M_x_gpu @ slc_gpu.transpose(1, 0, 2).reshape(nx_s, -1))
+                .reshape(nx, ny, cosize)
+                .transpose(1, 0, 2)
+            )
+
+            # 4. Unpack Triangle to Full Hermitian Matrix
+            # Current shape: (ny, nx, cosize)
+            # Target shape: (ny, nx, nc, nc)
+            # This is where memory jumps to ~800MB
+            cov_full_gpu = cp.zeros((ny, nx, nc, nc), dtype=dtype)
+            cov_full_gpu[..., tri_i_gpu, tri_j_gpu] = slc_gpu
+            cov_full_gpu[..., tri_j_gpu, tri_i_gpu] = cp.conj(slc_gpu)
+
+            # Flatten spatial dims for batched processing
+            # (ny * nx, nc, nc)
+            cov_flat = cov_full_gpu.reshape(-1, nc, nc)
+
+            # 5. Compute Eigenmaps
+            if num_maps == 1 and orthiter:
+                # FAST PATH: Power Iteration
+                # Much faster than eigh for finding just the top map
+                vecs, vals = power_iteration_gpu(cov_flat, num_iter=num_orthiter)
+
+                # Reshape back to (ny, nx, nc)
+                vecs = vecs.reshape(ny, nx, nc)
+                vals = vals.reshape(ny, nx)
+
+                # Store (CPU)
+                # Transpose vecs from (ny, nx, nc) to (nc, ny, nx)
+                sens_maps[0, :, z, :, :] = cp.asnumpy(vecs.transpose(2, 0, 1))
+                eigenvalues[0, z, :, :] = cp.asnumpy(vals)
+
+            else:
+                # SLOW PATH: Full Eigendecomposition (if num_maps > 1)
+                # Fallback if user asks for multiple maps
+                w, v = cp.linalg.eigh(cov_full_gpu)
+
+                maps_slice = v[..., -num_maps:].transpose(3, 2, 0, 1)
+                vals_slice = w[..., -num_maps:].transpose(2, 0, 1)
+
+                sens_maps[:, :, z, :, :] = cp.asnumpy(maps_slice)
+                eigenvalues[:, z, :, :] = cp.asnumpy(vals_slice)
+
+            # Progress
+            if (z + 1) % 5 == 0 or z == nz - 1:
+                elapsed = time.perf_counter() - t0
+                eta = elapsed / (z + 1) * (nz - z - 1)
+                print(
+                    f"    Slice {z + 1}/{nz}: {elapsed:.1f}s elapsed, ~{eta:.0f}s left"
+                )
+
+        return sens_maps, eigenvalues
+
+    else:
+        # Fallback for 2D (reuse existing logic or implement similar)
+        # Since your main issue is 3D memory/speed, I focused on the 3D block.
+        raise ValueError("This optimized function currently focuses on 3D data.")
+
+
 def pointwise_eigenmaps(
     img_cov, num_maps=1, phase_smooth=True, orthiter=True, num_orthiter=30
 ):
@@ -1491,8 +1689,9 @@ def espirit(
     # maps instead of the covariance.
     t0 = time.perf_counter()
     print("\nSteps 6-7: Resize covariance to full resolution + eigenmaps...")
+    print(f"  imgcov shape: {img_cov.shape}")
     print(f"  Target shape: {spatial_shape}")
-    sens_maps, eigenvalues = caltwo(
+    sens_maps, eigenvalues = caltwo_gpu(
         img_cov,
         spatial_shape,
         num_maps=num_maps,
