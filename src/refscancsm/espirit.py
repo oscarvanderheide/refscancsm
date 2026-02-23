@@ -841,7 +841,7 @@ def espirit(
     #     "kernels": kernels,
     # }
 
-    return sens_maps
+    return np.conj(sens_maps[0, :, :, :, :])
 
 
 if __name__ == "__main__":
