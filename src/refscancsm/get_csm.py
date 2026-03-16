@@ -73,6 +73,9 @@ def get_csm(
 
     with timed("Converting coil images to k-space (3D FFT)"):
         kspace = fft3c(interpolated_coil_imgs)
+        # Convert back to CPU if on GPU (espirit expects NumPy arrays)
+        if hasattr(kspace, 'get'):  # CuPy array has .get() method
+            kspace = kspace.get()
 
     csm = espirit(kspace, calib_size=calib_size, kernel_size=kernel_size, threshold=threshold)
 

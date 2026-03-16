@@ -106,4 +106,5 @@ def interpolate_refscan_to_target_geometry(
             cval=0.0,
         )
 
-    return cp.asnumpy(result) if use_gpu else result
+    # Keep data on GPU if available - let downstream operations decide when to transfer
+    return result
