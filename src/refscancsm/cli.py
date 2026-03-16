@@ -60,18 +60,31 @@ Examples:
     )
 
     parser.add_argument(
+        "--calib-size",
+        type=int,
+        default=24,
+        help="ESPIRiT calibration region size (default: 24)",
+    )
+
+    parser.add_argument(
+        "--kernel-size",
+        type=int,
+        default=6,
+        help="ESPIRiT kernel size (default: 6)",
+    )
+
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=0.001,
+        help="ESPIRiT singular value threshold (default: 0.001)",
+    )
+
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
         help="Show detailed information about the data",
-    )
-
-    parser.add_argument(
-        "--squeeze",
-        type=lambda x: str(x).lower() in ['true', '1', 'yes'],
-        default=True,
-        metavar="BOOL",
-        help="Squeeze singleton dimensions from CPX data (default: true)",
     )
 
     args = parser.parse_args()
@@ -82,7 +95,9 @@ Examples:
             refscan_cpx_path=args.refscan_cpx,
             sin_path_refscan=args.refscan_sin,
             interpolation_order=args.interp_order,
-            squeeze=args.squeeze,
+            calib_size=args.calib_size,
+            kernel_size=args.kernel_size,
+            threshold=args.threshold,
         )
     except Exception as e:
         print(f"\n✗ Error during interpolation: {e}", file=sys.stderr)
