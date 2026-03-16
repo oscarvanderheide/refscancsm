@@ -1,27 +1,14 @@
-"""Main workflow for generating coil sensitivity maps in target geometry."""
+"""Main workflow: load Philips refscan data and compute coil sensitivity maps."""
 
 from pathlib import Path
 
 import numpy as np
-from scipy.ndimage import map_coordinates
-from tqdm import tqdm
 
-from .espirit import espirit, fft3c
+from .espirit import espirit
+from .interp import interpolate_refscan_to_target_geometry
 from .parse_cpx import read_cpx
-from .parse_sin import (
-    get_idx_to_mps_transform,
-    get_matrix_size,
-    get_mps_to_xyz_transform,
-)
-
-try:
-    import cupy as cp
-    from cupyx.scipy.ndimage import map_coordinates as map_coordinates_gpu
-
-    HAVE_CUPY = True
-except ImportError:
-    cp = None
-    HAVE_CUPY = False
+from .parse_sin import get_idx_to_mps_transform, get_matrix_size, get_mps_to_xyz_transform
+from .utils import fft3c, timed
 
 
 def get_csm(
@@ -29,378 +16,152 @@ def get_csm(
     refscan_cpx_path: str = None,
     sin_path_refscan: str = None,
     interpolation_order: int = 1,
-    squeeze: bool = True,
+    calib_size: int = 24,
+    kernel_size: int = 6,
+    threshold: float = 0.001,
 ):
     """
-    Get coil sensitivity maps from SENSE refscaninterpolated to target scan geometry.
+    Compute coil sensitivity maps from a Philips SENSE refscan in target scan geometry.
 
-    This is the main function that orchestrates the complete workflow:
-    1. Load reference coil maps from .cpx file
-    2. Read geometry information from .sin files
-    3. Create transformation matrices
-    4. Interpolate coil maps onto target geometry
-    5. Return interpolated coil maps and metadata
+    This is the top-level function. It orchestrates the complete workflow:
+      1. Auto-detect refscan files (if not provided)
+      2. Load refscan coil images from the .cpx file
+      3. Build the affine transform from target array indices to refscan array indices
+      4. Interpolate refscan images onto the target geometry
+      5. Run ESPIRiT to extract coil sensitivity maps
 
-    Parameters:
-    -----------
+    Parameters
+    ----------
     sin_path_target : str
-        Path to target scan .sin file
+        Path to the target scan .sin file.
     refscan_cpx_path : str, optional
-        Path to reference scan .cpx file (with .cpx extension)
-        If None, auto-detects file with 'senserefscan' in the same directory
+        Path to the refscan .cpx file. Auto-detected when None.
     sin_path_refscan : str, optional
-        Path to reference scan .sin file
-        If None, auto-detects file with 'senserefscan' in the same directory
+        Path to the refscan .sin file. Auto-detected when None.
     interpolation_order : int
-        Interpolation order: 0=nearest, 1=linear, 3=cubic (default: 1)
-        Order 1 (linear) is recommended to avoid overshoots at mask boundaries
-    squeeze : bool
-        Remove singleton dimensions from CPX data (default: True)
+        Spline order for spatial interpolation: 0=nearest, 1=linear (default), 3=cubic.
+        Order 1 is recommended to avoid overshoot at mask boundaries.
+    calib_size : int
+        Size of the k-space calibration region for ESPIRiT (default: 24).
+    kernel_size : int
+        ESPIRiT kernel size (default: 6).
+    threshold : float
+        Relative singular-value threshold for kernel selection (default: 0.001).
 
-    Returns:
-    --------
-    - csm: numpy array [ncoils, nz, ny, nx] in target geometry
+    Returns
+    -------
+    csm : ndarray, shape (n_coils, nz, ny, nx)
+        Coil sensitivity maps in the target scan geometry.
     """
-
-    # Auto-detect refscan files if not provided
     if refscan_cpx_path is None or sin_path_refscan is None:
-        print("\n Auto-detecting senserefscan files...")
         refscan_cpx_path, sin_path_refscan = _find_refscan_files(sin_path_target)
-        print(f"      ✓ Found CPX: {refscan_cpx_path}")
-        print(f"      ✓ Found SIN: {sin_path_refscan}")
 
-    # Load low-resolution coil maps from SENSE refscan (exported as .cpx)
-    refscan_coil_imgs = _load_refscan(refscan_cpx_path, squeeze=squeeze)
+    refscan_coil_imgs = _load_refscan_coil_images(refscan_cpx_path)
 
-    # Load affine transformation matrix that maps indices in the target array
-    # to indices in the refscan array
-    target_idx_to_refscan_idx = _load_idx_to_idx_transformation(
+    target_idx_to_refscan_idx = _compute_target_to_refscan_idx_transform(
         sin_path_refscan, sin_path_target
     )
-
     matrix_size_target = get_matrix_size(sin_path_target, "target")
 
-    # Regrid refscan to target geometry
-    interpolated_coil_imgs = interpolate_to_target_geometry(
-        refscan_coil_imgs,
-        target_idx_to_refscan_idx,
-        matrix_size_target,
-        interpolation_order,
-    )
+    with timed("Interpolating refscan to target geometry"):
+        interpolated_coil_imgs = interpolate_refscan_to_target_geometry(
+            refscan_coil_imgs,
+            target_idx_to_refscan_idx,
+            matrix_size_target,
+            interpolation_order,
+        )
 
-    # For fully-sampled data, ESPIRIT can be simplified to the Walsh method for estimating coil sensitivity maps.
-    # csm = walsh_csm(interpolated_coil_imgs)
-    print("Converting interpolated images to k-space for ESPIRiT")
-    kspace_data = fft3c(interpolated_coil_imgs)
-    csm = espirit(kspace_data)
+    with timed("Converting coil images to k-space (3D FFT)"):
+        kspace = fft3c(interpolated_coil_imgs)
+
+    csm = espirit(kspace, calib_size=calib_size, kernel_size=kernel_size, threshold=threshold)
 
     return csm
 
 
+# =============================================================================
+# HELPERS
+# =============================================================================
+
+
 def _find_refscan_files(target_sin_path: str):
     """
-    Auto-detect senserefscan .cpx and .sin files in the same directory as target.
+    Auto-detect the senserefscan .cpx and .sin files in the same directory as the target.
 
-    Parameters:
-    -----------
-    target_sin_path : str
-        Path to the target .sin file
-
-    Returns:
-    --------
-    tuple: (cpx_path, sin_path) for senserefscan files
-
-    Raises:
-    -------
-    FileNotFoundError: If no senserefscan files are found
-    ValueError: If multiple senserefscan files are found
+    Raises FileNotFoundError if no matching files are found, and ValueError if
+    multiple matches exist (the caller must then pass the paths explicitly).
     """
     target_dir = Path(target_sin_path).parent
 
-    # Find all .sin files with 'senserefscan' in the name
     sin_candidates = list(target_dir.glob("*senserefscan*.sin"))
-
     if len(sin_candidates) == 0:
         raise FileNotFoundError(
             f"No senserefscan .sin files found in {target_dir}. "
             "Please provide sin_path_refscan explicitly."
         )
-    elif len(sin_candidates) > 1:
+    if len(sin_candidates) > 1:
         raise ValueError(
             f"Multiple senserefscan .sin files found in {target_dir}:\n"
-            + "\n".join(f"  - {f.name}" for f in sin_candidates)
+            + "\n".join(f"  {f.name}" for f in sin_candidates)
             + "\nPlease provide sin_path_refscan explicitly."
         )
 
-    sin_refscan = sin_candidates[0]
-
-    # Find all .cpx files with 'senserefscan' in the name
     cpx_candidates = list(target_dir.glob("*senserefscan*.cpx"))
-
     if len(cpx_candidates) == 0:
         raise FileNotFoundError(
             f"No senserefscan .cpx files found in {target_dir}. "
             "Please provide refscan_cpx_path explicitly."
         )
-    elif len(cpx_candidates) > 1:
+    if len(cpx_candidates) > 1:
         raise ValueError(
             f"Multiple senserefscan .cpx files found in {target_dir}:\n"
-            + "\n".join(f"  - {f.name}" for f in cpx_candidates)
+            + "\n".join(f"  {f.name}" for f in cpx_candidates)
             + "\nPlease provide refscan_cpx_path explicitly."
         )
 
-    cpx_refscan = cpx_candidates[0]
-
-    # Return with .cpx extension
-    return str(cpx_refscan), str(sin_refscan)
-
-
-def _load_refscan(cpx_path: str, squeeze: bool = True):
-    """Load and prepare coil sensitivity maps from SENSE refscan exported to .cpx file."""
-    print(f"\n Loading refscan from {cpx_path}...")
-    (csm, _, _) = read_cpx(cpx_path, squeeze=squeeze)
-    print(f"      ✓ Loaded shape: {csm.shape}")
-
-    # The coil maps have shape (ncoils, 2, nz, ny, nx)
-    # where index 1 of the second dimension to corresponds to receive coils
-    # and index 0 of the second dimension to corresponds to body coil
-    # Because we're going to be using ESPIRiT, we don't use the body coil information
-    csm = csm[:, 1, :, :, :]
-
-    # invert z dimension to match reconframe convention (k-space is acquired from feet to head)
-    csm = csm[:, ::-1, :, :]
-    # rotate by 180 degrees in the xy plane to match reconframe
-    csm = np.rot90(csm, k=2, axes=(2, 3))
-
-    print(f"      ✓ Coil maps shape: {csm.shape} [ncoils, nz, ny, nx]")
-    return csm
+    print(f"  Refscan CPX: {cpx_candidates[0]}")
+    print(f"  Refscan SIN: {sin_candidates[0]}")
+    return str(cpx_candidates[0]), str(sin_candidates[0])
 
 
-def _load_idx_to_idx_transformation(sin_path_refscan: str, sin_path_target: str):
-    """Affine transformation that maps refscan array indices to world coordinates."""
+def _load_refscan_coil_images(cpx_path: str):
+    """
+    Load coil images from a Philips SENSE refscan .cpx file.
 
-    # Affine transformation that maps refscan array indices to world coordinates
-    refscan_idx_to_xyz = _load_idx_to_xyz_transformation(sin_path_refscan, "refscan")
+    The .cpx file contains both body-coil and receive-coil images; only the
+    receive-coil images (index 1 along the second dimension) are used for ESPIRiT.
+    The z and xy orientations are also flipped to match the reconframe convention.
+    """
+    print(f"  Reading CPX: {cpx_path}")
+    (data, _, _) = read_cpx(cpx_path, squeeze=True)
 
-    # Affine transformation that maps target array indices to world coordinates
-    target_idx_to_xyz = _load_idx_to_xyz_transformation(sin_path_target, "target")
+    # Dimension order after squeeze: (n_coils, 2, nz, ny, nx)
+    # Index 0 = body coil, index 1 = receive coils (used for ESPIRiT)
+    coil_imgs = data[:, 1, :, :, :]
 
-    # Affine transformation that maps target array indices to refscan array indices
-    target_idx_to_refscan_idx = np.linalg.inv(refscan_idx_to_xyz) @ target_idx_to_xyz
+    # Flip z and rotate 180° in the xy plane to match reconframe convention
+    coil_imgs = coil_imgs[:, ::-1, :, :]
+    coil_imgs = np.rot90(coil_imgs, k=2, axes=(2, 3))
 
-    return target_idx_to_refscan_idx
+    print(f"  Coil images loaded: {coil_imgs.shape}  [n_coils, nz, ny, nx]")
+    return coil_imgs
 
 
-def _load_idx_to_xyz_transformation(sin_path: str, scan_type: str):
-    """Load transformation from array indices to world coordinates for a given scan."""
+def _compute_target_to_refscan_idx_transform(sin_path_refscan: str, sin_path_target: str):
+    """
+    Build a 4x4 affine matrix from target array indices to refscan array indices.
 
-    # Affine transformation that array indices to MPS
+    The chain is:  target_idx -> MPS -> world (xyz) -> MPS -> refscan_idx.
+    The intermediate world-coordinate step lets the two scans live in different
+    orientations / positions and still be registered correctly.
+    """
+    refscan_idx_to_xyz = _compute_index_to_world_transform(sin_path_refscan, "refscan")
+    target_idx_to_xyz = _compute_index_to_world_transform(sin_path_target, "target")
+    return np.linalg.inv(refscan_idx_to_xyz) @ target_idx_to_xyz
+
+
+def _compute_index_to_world_transform(sin_path: str, scan_type: str):
+    """Build a 4x4 affine matrix from array indices to world (xyz) coordinates."""
     idx_to_mps = get_idx_to_mps_transform(sin_path, scan_type)
-    # Affine transformation that maps MPS to world coordinates
     mps_to_xyz = get_mps_to_xyz_transform(sin_path, scan_type)
-    # Multiplty the matrices to get idx to world coordinates transformation
-    idx_to_xyz = mps_to_xyz @ idx_to_mps
-
-    return idx_to_xyz
-
-
-def interpolate_to_target_geometry(
-    refscan_imgs,
-    target_to_refscan_transform,
-    target_shape,
-    interpolation_order: int,
-    use_gpu=True,
-):
-    """
-    Wrapper to choose between CPU and GPU interpolation.
-    """
-    if use_gpu and HAVE_CUPY:
-        try:
-            return _interpolate_to_target_geometry_gpu(
-                refscan_imgs,
-                target_to_refscan_transform,
-                target_shape,
-                interpolation_order,
-            )
-        except Exception as e:
-            print(
-                f"GPU Interpolation failed (likely OOM). Falling back to CPU. Error: {e}"
-            )
-            # Fallthrough to CPU
-
-    # Fallback to your original CPU function
-    return _interpolate_to_target_geometry_cpu(
-        refscan_imgs, target_to_refscan_transform, target_shape, interpolation_order
-    )
-
-
-def _interpolate_to_target_geometry_cpu(
-    refscan_imgs, target_to_refscan_transform, target_shape, interpolation_order: int
-):
-    """Interpolate refscan images to target geometry."""
-    print("\n Interpolating ...")
-
-    ncoils = refscan_imgs.shape[0]
-    target_shape_tuple = tuple(target_shape.astype(int))
-    nx, ny, nz = target_shape_tuple
-
-    Z, Y, X = np.meshgrid(np.arange(nz), np.arange(ny), np.arange(nx), indexing="ij")
-
-    # Flip the M and P indices to match the physical orientation expected by the transform
-    # This effectively mirrors the coordinate system before it hits the matrix
-    X = (nx - 1) - X
-    Y = (ny - 1) - Y
-    Z = (nz - 1) - Z
-
-    # 2. Stack into MPS order for the Matrix input: [i_m, i_p, i_s]
-    # target_coords shape: (nz, ny, nx, 3)
-    target_coords_mps = np.stack([X, Y, Z], axis=-1)
-
-    target_coords_homogeneous = np.ones((*target_coords_mps.shape[:-1], 4))
-    target_coords_homogeneous[..., :3] = target_coords_mps
-
-    # 3. Transform to Source Indices
-    # Result is in [i_m_ref, i_p_ref, i_s_ref] order
-    refscan_coords_flat = (
-        target_to_refscan_transform @ target_coords_homogeneous.reshape(-1, 4).T
-    ).T
-    refscan_coords = refscan_coords_flat[:, :3].reshape(nz, ny, nx, 3)
-
-    # 4. MAP COORDINATES TO ARRAY AXES
-    # refscan_imgs is (nz, ny, nx) -> Axis 0=S, Axis 1=P, Axis 2=M
-    # So we must provide indices in order [S_idx, P_idx, M_idx]
-    coords_for_interp = np.array(
-        [
-            refscan_coords[..., 2].ravel(),  # Slice index (S) -> maps to nz
-            refscan_coords[..., 1].ravel(),  # Phase index (P) -> maps to ny
-            refscan_coords[..., 0].ravel(),  # Freq index (M)  -> maps to nx
-        ]
-    )
-
-    interpolated_imgs = np.zeros((ncoils, nz, ny, nx), dtype=np.complex64)
-
-    for coil_idx in tqdm(range(ncoils), desc="Interpolating Coils"):
-        real_part = map_coordinates(
-            refscan_imgs[coil_idx, ...].real,
-            coords_for_interp,
-            order=interpolation_order,
-            mode="constant",
-            cval=0.0,
-        ).reshape(nz, ny, nx)
-
-        imag_part = map_coordinates(
-            refscan_imgs[coil_idx, ...].imag,
-            coords_for_interp,
-            order=interpolation_order,
-            mode="constant",
-            cval=0.0,
-        ).reshape(nz, ny, nx)
-
-        interpolated_imgs[coil_idx, ...] = real_part + 1j * imag_part
-
-    print("      ✓ Interpolation complete!")
-    print(f"      Output shape: {interpolated_imgs.shape} [ncoils, nz, ny, nx]")
-
-    return interpolated_imgs
-
-
-def _interpolate_to_target_geometry_gpu(
-    refscan_imgs, target_to_refscan_transform, target_shape, interpolation_order: int
-):
-    """
-    GPU-Accelerated interpolation of refscan images to target geometry.
-    """
-    print("\n  [GPU] Interpolating...")
-
-    # 1. Setup Data on GPU
-    ncoils = refscan_imgs.shape[0]
-    # Ensure complex64 for speed/memory
-    refscan_gpu = cp.asarray(refscan_imgs.astype(np.complex64))
-
-    # Transform matrix to GPU (float32 is usually sufficient for coords)
-    transform_gpu = cp.asarray(target_to_refscan_transform.astype(np.float32))
-
-    target_shape_tuple = tuple(target_shape.astype(int))
-    nx, ny, nz = target_shape_tuple
-
-    # 2. Generate Coordinates directly on GPU
-    # This avoids moving massive coordinate arrays from CPU to GPU
-    Z, Y, X = cp.meshgrid(
-        cp.arange(nz, dtype=cp.float32),
-        cp.arange(ny, dtype=cp.float32),
-        cp.arange(nx, dtype=cp.float32),
-        indexing="ij",
-    )
-
-    # Flip indices (matching your CPU logic)
-    X = (nx - 1) - X
-    Y = (ny - 1) - Y
-    Z = (nz - 1) - Z
-
-    # Stack: [X, Y, Z] -> (nz, ny, nx, 3)
-    # We flatten immediately to (N_total, 3) for matrix multiplication
-    target_coords_flat = cp.stack([X, Y, Z], axis=-1).reshape(-1, 3)
-
-    # Homogeneous coordinates: Add column of 1s
-    # Shape: (N_total, 4)
-    ones_col = cp.ones((target_coords_flat.shape[0], 1), dtype=cp.float32)
-    target_coords_homogeneous = cp.concatenate([target_coords_flat, ones_col], axis=1)
-
-    # 3. Apply Transform
-    # (Transform @ Coords.T).T  -> Shape (N_total, 4)
-    refscan_coords_flat = (transform_gpu @ target_coords_homogeneous.T).T
-
-    # 4. Prepare Coordinates for map_coordinates
-    # We need shape (3, N_total) or (3, nz, ny, nx)
-    # Order must be [S_idx, P_idx, M_idx] -> [Axis 2, Axis 1, Axis 0] of the result
-
-    # Extract columns 2, 1, 0 corresponding to Z, Y, X (S, P, M)
-    coords_for_interp = cp.stack(
-        [
-            refscan_coords_flat[:, 2],  # S (Slice/Z)
-            refscan_coords_flat[:, 1],  # P (Phase/Y)
-            refscan_coords_flat[:, 0],  # M (Freq/X)
-        ],
-        axis=0,
-    )
-
-    # Reshape to (3, nz, ny, nx) so map_coordinates outputs the correct shape automatically
-    coords_for_interp = coords_for_interp.reshape(3, nz, ny, nx)
-
-    # 5. Perform Interpolation
-    interpolated_imgs_gpu = cp.zeros((ncoils, nz, ny, nx), dtype=cp.complex64)
-
-    # Loop over coils (processing one 3D volume at a time is memory efficient)
-    for coil_idx in range(ncoils):
-        # Extract real/imag
-        real_in = refscan_gpu[coil_idx].real
-        imag_in = refscan_gpu[coil_idx].imag
-
-        # Interpolate Real
-        real_out = map_coordinates_gpu(
-            real_in,
-            coords_for_interp,
-            order=interpolation_order,
-            mode="constant",
-            cval=0.0,
-        )
-
-        # Interpolate Imag
-        imag_out = map_coordinates_gpu(
-            imag_in,
-            coords_for_interp,
-            order=interpolation_order,
-            mode="constant",
-            cval=0.0,
-        )
-
-        interpolated_imgs_gpu[coil_idx] = real_out + 1j * imag_out
-
-        # Optional: Print progress every few coils
-        if (coil_idx + 1) % 4 == 0:
-            print(f"      Interpolated coil {coil_idx + 1}/{ncoils}")
-
-    print("      ✓ GPU Interpolation complete!")
-
-    # 6. Move result back to CPU
-    return cp.asnumpy(interpolated_imgs_gpu)
+    return mps_to_xyz @ idx_to_mps
