@@ -7,14 +7,37 @@ from functools import lru_cache
 
 import numpy as np
 
+# ---------------------------------------------------------------------------
+# Verbose output control
+# ---------------------------------------------------------------------------
+
+_VERBOSE = False  # Global flag to control verbose output
+
+
+def set_verbose(verbose: bool) -> None:
+    """Set whether to enable verbose output."""
+    global _VERBOSE
+    _VERBOSE = verbose
+
+
+def get_verbose() -> bool:
+    """Return whether verbose output is enabled."""
+    return _VERBOSE
+
+
+def vprint(*args, **kwargs):
+    """Print only if verbose mode is enabled."""
+    if _VERBOSE:
+        print(*args, **kwargs)
+
 
 @contextmanager
 def timed(label):
     """Context manager that prints a step label, runs the block, then prints elapsed time."""
-    print(f"  {label}...")
+    vprint(f"  {label}...")
     t0 = time.perf_counter()
     yield
-    print(f"    ({time.perf_counter() - t0:.1f}s)")
+    vprint(f"    ({time.perf_counter() - t0:.1f}s)")
 
 
 # ---------------------------------------------------------------------------
@@ -34,7 +57,7 @@ def set_force_cpu(force: bool) -> None:
     global _FORCE_CPU
     _FORCE_CPU = force
     if force:
-        print("  Forcing CPU usage (GPU disabled)")
+        vprint("  Forcing CPU usage (GPU disabled)")
 
 
 def get_force_cpu() -> bool:
@@ -54,7 +77,7 @@ def _gpu_available_internal() -> bool:
         _ = cp.zeros(1, dtype=cp.float32)
         cp.cuda.runtime.deviceSynchronize()
         device_name = cp.cuda.runtime.getDeviceProperties(0)["name"].decode()
-        print(f"  GPU detected: {device_name}")
+        vprint(f"  GPU detected: {device_name}")
         return True
     except Exception:
         return False

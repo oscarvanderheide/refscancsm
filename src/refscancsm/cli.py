@@ -106,6 +106,7 @@ Examples:
             kernel_size=args.kernel_size,
             threshold=args.threshold,
             force_cpu=args.force_cpu,
+            verbose=args.verbose,
         )
     except Exception as e:
         print(f"\n✗ Error during interpolation: {e}", file=sys.stderr)

@@ -9,7 +9,16 @@ from .parse_sin import (
     get_mps_to_xyz_transform,
     get_voxel_sizes,
 )
-from .utils import fft3c, get_num_threads, gpu_available, set_force_cpu, set_num_threads
+from .utils import (
+    fft3c,
+    get_num_threads,
+    get_verbose,
+    gpu_available,
+    set_force_cpu,
+    set_num_threads,
+    set_verbose,
+    vprint,
+)
 
 __version__ = "0.1.0"
 
@@ -26,4 +35,7 @@ __all__ = [
     "get_num_threads",
     "set_num_threads",
     "set_force_cpu",
+    "get_verbose",
+    "set_verbose",
+    "vprint",
 ]

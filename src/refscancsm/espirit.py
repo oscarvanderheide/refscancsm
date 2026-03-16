@@ -24,7 +24,7 @@ import numpy as np
 from scipy import linalg
 from tqdm import tqdm
 
-from .utils import cp, get_num_threads, gpu_available, ifft2c, ifft3c, timed
+from .utils import cp, get_num_threads, gpu_available, ifft2c, ifft3c, timed, vprint
 
 DEFAULT_DTYPE = np.complex64
 
@@ -100,7 +100,7 @@ def espirit(
     kernel_size = _to_size_tuple(kernel_size, n_dims, default=6)
 
     backend = "GPU" if gpu_available() else "CPU"
-    print(
+    vprint(
         f"  ESPIRiT ({n_dims}D, {backend})"
         f"  calib={'x'.join(str(c) for c in calib_size)}"
         f"  kernel={'x'.join(str(k) for k in kernel_size)}"
@@ -115,7 +115,7 @@ def espirit(
 
     with timed("3. Compute signal-space kernels (eigendecomposition of Gram matrix)"):
         kernels, _ = _compute_kernel_subspace(cal_matrix, threshold=threshold)
-    print(f"     ({kernels.shape[0]} kernels retained)")
+    vprint(f"     ({kernels.shape[0]} kernels retained)")
 
     with timed("4. Transform kernels to image domain"):
         img_kernels = _transform_kernels_to_image_domain(kernels, kernel_size, n_coils)

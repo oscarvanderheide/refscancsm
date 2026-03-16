@@ -12,18 +12,19 @@ from .parse_sin import (
     get_matrix_size,
     get_mps_to_xyz_transform,
 )
-from .utils import fft3c, set_force_cpu, timed
+from .utils import fft3c, set_force_cpu, set_verbose, timed, vprint
 
 
 def get_csm(
     sin_path_target: str,
-    refscan_cpx_path: str = None,
-    sin_path_refscan: str = None,
+    refscan_cpx_path: str | None = None,
+    sin_path_refscan: str | None = None,
     interpolation_order: int = 1,
     calib_size: int = 24,
     kernel_size: int = 6,
     threshold: float = 0.001,
     force_cpu: bool = False,
+    verbose: bool = False,
 ):
     """
     Compute coil sensitivity maps from a Philips SENSE refscan in target scan geometry.
@@ -54,14 +55,17 @@ def get_csm(
         Relative singular-value threshold for kernel selection (default: 0.001).
     force_cpu : bool
         Force CPU usage even when GPU is available (default: False).
+    verbose : bool
+        Enable verbose output with timing information (default: False).
 
     Returns
     -------
     csm : ndarray, shape (n_coils, nz, ny, nx)
         Coil sensitivity maps in the target scan geometry.
     """
-    # Set CPU forcing before any GPU detection
+    # Set CPU forcing and verbosity before any operations
     set_force_cpu(force_cpu)
+    set_verbose(verbose)
 
     if refscan_cpx_path is None or sin_path_refscan is None:
         refscan_cpx_path, sin_path_refscan = _find_refscan_files(sin_path_target)
@@ -136,8 +140,8 @@ def _find_refscan_files(target_sin_path: str):
             + "\nPlease provide refscan_cpx_path explicitly."
         )
 
-    print(f"  Refscan CPX: {cpx_candidates[0]}")
-    print(f"  Refscan SIN: {sin_candidates[0]}")
+    vprint(f"  Refscan CPX: {cpx_candidates[0]}")
+    vprint(f"  Refscan SIN: {sin_candidates[0]}")
     return str(cpx_candidates[0]), str(sin_candidates[0])
 
 
@@ -149,7 +153,7 @@ def _load_refscan_coil_images(cpx_path: str):
     receive-coil images (index 1 along the second dimension) are used for ESPIRiT.
     The z and xy orientations are also flipped to match the reconframe convention.
     """
-    print(f"  Reading CPX: {cpx_path}")
+    vprint(f"  Reading CPX: {cpx_path}")
     (data, _, _) = read_cpx(cpx_path, squeeze=True)
 
     # Dimension order after squeeze: (n_coils, 2, nz, ny, nx)
@@ -160,7 +164,7 @@ def _load_refscan_coil_images(cpx_path: str):
     coil_imgs = coil_imgs[:, ::-1, :, :]
     coil_imgs = np.rot90(coil_imgs, k=2, axes=(2, 3))
 
-    print(f"  Coil images loaded: {coil_imgs.shape}  [n_coils, nz, ny, nx]")
+    vprint(f"  Coil images loaded: {coil_imgs.shape}  [n_coils, nz, ny, nx]")
     return coil_imgs
 
 

@@ -4,10 +4,10 @@ import re
 
 import numpy as np
 
+from .utils import vprint
 
-def get_mps_to_xyz_transform(
-    sin_file_path: str, scan_type: str
-) -> np.ndarray:
+
+def get_mps_to_xyz_transform(sin_file_path: str, scan_type: str) -> np.ndarray:
     """
     TODO
     """
@@ -132,7 +132,7 @@ def get_voxel_sizes(sin_file_path: str, scan_type: str = "target") -> np.ndarray
     # For target, multiply by ratio of recon_resolutions to scan_resolutions
     recon_resolutions = get_matrix_size(sin_file_path, "refscan")
     scan_resolutions = get_matrix_size(sin_file_path, "target")
-    print(
+    vprint(
         f"Recon resolutions: {recon_resolutions}, Scan resolutions: {scan_resolutions}"
     )
     resolution_ratio = recon_resolutions / scan_resolutions
@@ -173,10 +173,10 @@ def get_matrix_size(sin_file_path: str, scan_type: str) -> np.ndarray:
                 values = re.findall(r"[-+]?\d+\.?\d*", line.split(":")[-1])
                 if len(values) >= 3:
                     # Return first 3 values (ignore the 4th value which is always 1)
-                    print(
+                    vprint(
                         f"Found {search_key} in {sin_file_path.split('/')[-1]}: {line.strip()}"
                     )
-                    print(f"Found matrix size values: {values[:3]}")
+                    vprint(f"Found matrix size values: {values[:3]}")
                     return np.array([float(v) for v in values[:3]])
 
     raise ValueError(f"Could not find {search_key} in file {sin_file_path}")
@@ -200,9 +200,7 @@ def _get_mps_to_xyz_linear_part(sin_file_path: str) -> np.ndarray:
 
     linear_transformation = []
     # Patterns to match location data in .sin file
-    patterns = [
-        f" 01 {i:02d} 01: location_matrices" for i in range(1, 4)
-    ]
+    patterns = [f" 01 {i:02d} 01: location_matrices" for i in range(1, 4)]
 
     with open(sin_file_path, "r") as f:
         for line in f:
@@ -222,9 +220,7 @@ def _get_mps_to_xyz_linear_part(sin_file_path: str) -> np.ndarray:
     return np.array(linear_transformation)
 
 
-def _get_mps_to_xyz_translation_part(
-    sin_file_path: str
-) -> np.ndarray:
+def _get_mps_to_xyz_translation_part(sin_file_path: str) -> np.ndarray:
     """
     Parse .sin file to extract the translation part of the affine transformation matrix that is used to map
     array indices to world coordinates.
@@ -253,8 +249,6 @@ def _get_mps_to_xyz_translation_part(
 
     # Validate that we found all required data
     if translation is None:
-        raise ValueError(
-            f"Could not find translation data in {sin_file_path}. "
-        )
+        raise ValueError(f"Could not find translation data in {sin_file_path}. ")
 
     return translation
