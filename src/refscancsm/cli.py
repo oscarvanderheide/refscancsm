@@ -82,6 +82,12 @@ Examples:
     )
 
     parser.add_argument(
+        "--force-cpu",
+        action="store_true",
+        help="Force CPU usage even when GPU is available",
+    )
+
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -99,6 +105,7 @@ Examples:
             calib_size=args.calib_size,
             kernel_size=args.kernel_size,
             threshold=args.threshold,
+            force_cpu=args.force_cpu,
         )
     except Exception as e:
         print(f"\n✗ Error during interpolation: {e}", file=sys.stderr)

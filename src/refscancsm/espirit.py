@@ -82,11 +82,20 @@ def espirit(
     csm : ndarray, shape (n_coils, *spatial_dims)
         Coil sensitivity maps in the same geometry as kspace.
     """
+    # Detect if input is on GPU and keep it there as long as possible
+    is_gpu = hasattr(kspace, "get")
+    xp = cp if is_gpu else np
+
     n_coils = kspace.shape[0]
     spatial_shape = kspace.shape[1:]
     n_dims = len(spatial_shape)
 
-    kspace = kspace.astype(DEFAULT_DTYPE)
+    # Keep data on original device
+    if is_gpu:
+        kspace = xp.asarray(kspace, dtype=xp.complex64)
+    else:
+        kspace = kspace.astype(DEFAULT_DTYPE)
+
     calib_size = _to_size_tuple(calib_size, n_dims, default=24)
     kernel_size = _to_size_tuple(kernel_size, n_dims, default=6)
 
@@ -157,13 +166,14 @@ def _extract_calibration_region(kspace, calib_size):
     The centre carries the most energy and captures coil geometry without
     needing the rest of k-space (which may be undersampled in accelerated scans).
     """
+    xp = cp.get_array_module(kspace) if cp is not None else np
     spatial_dims = kspace.shape[1:]
     slices = [slice(None)]
     for full_size, cal_size_i in zip(spatial_dims, calib_size):
         center = full_size // 2
         start = center - (cal_size_i // 2)
         slices.append(slice(start, start + cal_size_i))
-    return kspace[tuple(slices)].copy()
+    return xp.asarray(kspace[tuple(slices)])
 
 
 def _build_calibration_matrix(calib_data, kernel_size):
@@ -175,6 +185,11 @@ def _build_calibration_matrix(calib_data, kernel_size):
     The SVD of this matrix reveals the GRAPPA-like interpolation kernels used
     by ESPIRiT to estimate coil sensitivities.
     """
+    # Move to CPU for patch extraction (slicing is complex on GPU)
+    xp = cp.get_array_module(calib_data) if cp is not None else np
+    if xp != np:
+        calib_data = calib_data.get()
+
     n_coils = calib_data.shape[0]
     spatial_shape = calib_data.shape[1:]
     n_dims = len(spatial_shape)
@@ -702,6 +717,10 @@ def _build_phase_rotation_matrix(calib_data):
     Applying its conjugate removes the global phase ambiguity and yields smooth,
     near-real sensitivity maps.
     """
+    # Convert to CPU if on GPU (scipy.linalg doesn't support CuPy)
+    if hasattr(calib_data, "get"):
+        calib_data = calib_data.get()
+
     n_coils = calib_data.shape[0]
     calib_flat = calib_data.reshape(n_coils, -1)
     gram = calib_flat @ calib_flat.conj().T / calib_flat.shape[1]

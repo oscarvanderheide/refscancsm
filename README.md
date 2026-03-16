@@ -86,6 +86,7 @@ get_csm target.sin \
   --calib-size 24 \            # ESPIRiT calibration region size
   --kernel-size 6 \            # ESPIRiT kernel size
   --threshold 0.001 \          # Singular value threshold
+  --force-cpu \                # Force CPU even when GPU available
   -v                           # Verbose timing output
 ```
 
@@ -118,7 +119,8 @@ csm = get_csm(
     interpolation_order=1,               # 0=nearest, 1=linear, 3=cubic
     calib_size=24,                       # ESPIRiT calibration region
     kernel_size=6,                       # ESPIRiT kernel size
-    threshold=0.001                      # Singular value threshold
+    threshold=0.001,                     # Singular value threshold
+    force_cpu=False,                     # Force CPU even when GPU available
 )
 ```
 
@@ -142,6 +144,16 @@ csm = get_csm(
 - CPU only: ~2-3 minutes
 
 **Note**: GPU acceleration is **highly recommended** for production use. CPU fallback is available but has not been extensively tested on large datasets.
+
+To force CPU usage even when GPU is available:
+```bash
+get_csm target.sin --force-cpu
+```
+
+Or in Python:
+```python
+csm = get_csm('target.sin', force_cpu=True)
+```
 
 ## Algorithm
 
@@ -181,7 +193,12 @@ Check that data stays on GPU through FFT. See `.github/instructions/gpu-optimiza
 - Use CPU fallback: `CUDA_VISIBLE_DEVICES="" get_csm target.sin`
 - Reduce matrix size or use lower interpolation order
 
-## Development
+
+# Compare CPU vs GPU outputs
+python test_cpu_gpu_comparison.py <target.sin>
+```
+
+See [TEST_GUIDE.md](TEST_GUIDE.md) for detailed testing instructions.Development
 
 ```bash
 # Install with dev dependencies

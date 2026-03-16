@@ -26,10 +26,25 @@ try:
 except Exception:
     cp = None
 
+_FORCE_CPU = False  # Global flag to force CPU usage
+
+
+def set_force_cpu(force: bool) -> None:
+    """Set whether to force CPU usage even when GPU is available."""
+    global _FORCE_CPU
+    _FORCE_CPU = force
+    if force:
+        print("  Forcing CPU usage (GPU disabled)")
+
+
+def get_force_cpu() -> bool:
+    """Return whether CPU usage is forced."""
+    return _FORCE_CPU
+
 
 @lru_cache(maxsize=1)
-def gpu_available() -> bool:
-    """Return True when CuPy is installed and can access at least one CUDA device."""
+def _gpu_available_internal() -> bool:
+    """Internal check for GPU availability (cached)."""
     if cp is None:
         return False
     try:
@@ -43,6 +58,13 @@ def gpu_available() -> bool:
         return True
     except Exception:
         return False
+
+
+def gpu_available() -> bool:
+    """Return True when CuPy is installed and can access at least one CUDA device, and CPU is not forced."""
+    if _FORCE_CPU:
+        return False
+    return _gpu_available_internal()
 
 
 # ---------------------------------------------------------------------------

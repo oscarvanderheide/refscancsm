@@ -12,7 +12,7 @@ from .parse_sin import (
     get_matrix_size,
     get_mps_to_xyz_transform,
 )
-from .utils import fft3c, timed
+from .utils import fft3c, set_force_cpu, timed
 
 
 def get_csm(
@@ -23,6 +23,7 @@ def get_csm(
     calib_size: int = 24,
     kernel_size: int = 6,
     threshold: float = 0.001,
+    force_cpu: bool = False,
 ):
     """
     Compute coil sensitivity maps from a Philips SENSE refscan in target scan geometry.
@@ -51,12 +52,17 @@ def get_csm(
         ESPIRiT kernel size (default: 6).
     threshold : float
         Relative singular-value threshold for kernel selection (default: 0.001).
+    force_cpu : bool
+        Force CPU usage even when GPU is available (default: False).
 
     Returns
     -------
     csm : ndarray, shape (n_coils, nz, ny, nx)
         Coil sensitivity maps in the target scan geometry.
     """
+    # Set CPU forcing before any GPU detection
+    set_force_cpu(force_cpu)
+
     if refscan_cpx_path is None or sin_path_refscan is None:
         refscan_cpx_path, sin_path_refscan = _find_refscan_files(sin_path_target)
 
@@ -77,13 +83,15 @@ def get_csm(
 
     with timed("Converting coil images to k-space (3D FFT)"):
         kspace = fft3c(interpolated_coil_imgs)
-        # Convert back to CPU if on GPU (espirit expects NumPy arrays)
-        if hasattr(kspace, "get"):  # CuPy array has .get() method
-            kspace = kspace.get()
 
+    # ESPIRiT can now accept GPU arrays and will handle transfers internally
     csm = espirit(
         kspace, calib_size=calib_size, kernel_size=kernel_size, threshold=threshold
     )
+
+    # Always return NumPy arrays
+    if hasattr(csm, "get"):
+        csm = csm.get()
 
     return csm
 
