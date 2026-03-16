@@ -1,112 +1,87 @@
-# RefScanCSM
+# refscancsm
 
-A Python package for computing MRI coil sensitivity maps from Philips SENSE reference scans and interpolating them onto arbitrary target scan geometries using ESPIRiT.
+Compute MRI coil sensitivity maps from Philips SENSE reference scans and interpolate them onto arbitrary target scan geometries using ESPIRiT.
 
-**Required files**: `.cpx` of SENSE refscan, `.sin` of SENSE refscan and `.sin` of target scan. Can all be exported with Gyrotools' gtPacknGo. 
+**Required files**: `.cpx` (SENSE refscan images), `.sin` (SENSE refscan geometry), `.sin` (target scan geometry). Export with Gyrotools' gtPacknGo.
 
-**Steps performed**: 
-1) Read in SENSE refscan images from `.cpx`
-2) Read in information about refscan and target scan geometries from `.sin` files
-3) Interpolate SENSE refscan images to target geometry
-4) FFT interpolated images to k-space data
-5) Apply ESPIRiT on k-space data
+The ESPIRiT implementation is a GPU-compatible Python translation from the [BART Toolbox](https://codeberg.org/mrirecon/bart) (Uecker et al., MRM 2014).
 
-The ESPIRiT algorithm in this package is a GPU-compatible Python translation of ESPIRiT (Uecker et al., MRM 2014) from the [BART Toolbox](https://codeberg.org/mrirecon/bart). It should become a standalone package.
+## Usage
 
-## Quick Start
-
-### Command Line (no installation needed)
+### Command Line
 
 ```bash
-# Most common usage - auto-detects refscan.{cpx,sin} files in same directory
+# Auto-detects refscan files (*senserefscan*.{cpx,sin}) in same directory
 uvx --from git+https://github.com/oscarvanderheide/refscancsm.git get_csm target.sin
 ```
 
-**Recommended**: Create an alias for convenience:
+Create an alias for convenience:
 ```bash
 alias get_csm='uvx --from git+https://github.com/oscarvanderheide/refscancsm.git get_csm'
-```
-
-Then use it anywhere:
-```bash
 get_csm /path/to/target.sin
 ```
 
 ### Python API
 
-Add `refscancsm` to your project:
-```bash
+```python
+from refscancsm import get_csm
 
+# Auto-detects refscan files in same directory as target
+csm = get_csm('target.sin')  # shape: (n_coils, nz, ny, nx), dtype: complex64
+```
+
+## Installation
+
+### GPU Acceleration (Linux/Windows only)
+
+For CUDA 11.x:
+```bash
+uv add git+https://github.com/oscarvanderheide/refscancsm.git --extra cuda11x
+```
+
+For CUDA 12.x:
+```bash
+uv add git+https://github.com/oscarvanderheide/refscancsm.git --extra cuda12x
+```
+
+### CPU Only (macOS or no GPU)
+
+```bash
 uv add git+https://github.com/oscarvanderheide/refscancsm.git
 ```
 
+The tool automatically detects GPU availability and falls back to CPU if needed.
 
-```python
-from refscancsm import get_csm
+## Options
 
-# Simplest usage - auto-detects refscan files
-csm = get_csm('target.sin')
+### Command Line
 
-# Result shape: (n_coils, nz, ny, nx), dtype: complex64
-print(f"Coil sensitivity maps: {csm.shape}")
-```
-
-## Usage
-
-### Command-line Interface
-
-**Basic usage** (auto-detects `*senserefscan*.cpx` and `*senserefscan*.sin` in same directory):
 ```bash
-get_csm target.sin
+get_csm target.sin [OPTIONS]
 ```
 
-**Explicit paths** (when multiple refscan files exist):
-```bash
-get_csm target.sin --refscan-cpx refscan.cpx --refscan-sin refscan.sin
-```
-
-**Options**:
-```bash
-get_csm target.sin \
-  -o coil_maps.npy \          # Output path (.npy or .mat)
-  --interp-order 3 \           # 0=nearest, 1=linear (default), 3=cubic
-  --calib-size 24 \            # ESPIRiT calibration region size
-  --kernel-size 6 \            # ESPIRiT kernel size
-  --threshold 0.001 \          # Singular value threshold
-  --force-cpu \                # Force CPU even when GPU available
-  -v                           # Verbose timing output
-```
-
-**Get help**:
-```bash
-get_csm --help
-```
+- `--refscan-cpx PATH` - Path to refscan .cpx file (auto-detected by default)
+- `--refscan-sin PATH` - Path to refscan .sin file (auto-detected by default)
+- `-o, --output PATH` - Output file (.npy or .mat, default: csm.npy)
+- `--interp-order N` - Interpolation: 0=nearest, 1=linear, 3=cubic (default: 1)
+- `--calib-size N` - ESPIRiT calibration region size (default: 24)
+- `--kernel-size N` - ESPIRiT kernel size (default: 6)
+- `--threshold F` - Singular value threshold (default: 0.001)
+- `--force-cpu` - Force CPU even when GPU available
+- `-v, --verbose` - Show detailed timing information
 
 ### Python API
 
-**Basic usage** (auto-detects refscan files):
-```python
-from refscancsm import get_csm
-import numpy as np
-
-# Auto-detect refscan files in same directory as target
-csm = get_csm('target.sin')
-
-# Result: (n_coils, nz, ny, nx), complex64
-print(f"Shape: {csm.shape}")
-np.save('coil_maps.npy', csm)
-```
-
-**Full control**:
 ```python
 csm = get_csm(
     sin_path_target='target.sin',
-    refscan_cpx_path='refscan.cpx',     # Optional - auto-detected if None
-    sin_path_refscan='refscan.sin',     # Optional - auto-detected if None
-    interpolation_order=1,               # 0=nearest, 1=linear, 3=cubic
-    calib_size=24,                       # ESPIRiT calibration region
-    kernel_size=6,                       # ESPIRiT kernel size
-    threshold=0.001,                     # Singular value threshold
-    force_cpu=False,                     # Force CPU even when GPU available
+    refscan_cpx_path=None,        # Auto-detected if None
+    sin_path_refscan=None,        # Auto-detected if None
+    interpolation_order=1,        # 0=nearest, 1=linear, 3=cubic
+    calib_size=24,                # ESPIRiT calibration region
+    kernel_size=6,                # ESPIRiT kernel size
+    threshold=0.001,              # Singular value threshold
+    force_cpu=False,              # Force CPU
+    verbose=False,                # Show timing info
 )
 ```
