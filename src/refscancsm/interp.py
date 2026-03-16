@@ -75,7 +75,8 @@ def interpolate_refscan_to_target_geometry(
 
     # Apply affine transform: target indices -> refscan indices
     refscan_coords = (
-        (transform @ target_coords_homogeneous.reshape(-1, 4).T).T[:, :3]
+        (transform @ target_coords_homogeneous.reshape(-1, 4).T)
+        .T[:, :3]
         .reshape(nz, ny, nx, 3)
     )
 

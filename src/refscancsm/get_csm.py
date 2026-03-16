@@ -7,7 +7,11 @@ import numpy as np
 from .espirit import espirit
 from .interp import interpolate_refscan_to_target_geometry
 from .parse_cpx import read_cpx
-from .parse_sin import get_idx_to_mps_transform, get_matrix_size, get_mps_to_xyz_transform
+from .parse_sin import (
+    get_idx_to_mps_transform,
+    get_matrix_size,
+    get_mps_to_xyz_transform,
+)
 from .utils import fft3c, timed
 
 
@@ -74,10 +78,12 @@ def get_csm(
     with timed("Converting coil images to k-space (3D FFT)"):
         kspace = fft3c(interpolated_coil_imgs)
         # Convert back to CPU if on GPU (espirit expects NumPy arrays)
-        if hasattr(kspace, 'get'):  # CuPy array has .get() method
+        if hasattr(kspace, "get"):  # CuPy array has .get() method
             kspace = kspace.get()
 
-    csm = espirit(kspace, calib_size=calib_size, kernel_size=kernel_size, threshold=threshold)
+    csm = espirit(
+        kspace, calib_size=calib_size, kernel_size=kernel_size, threshold=threshold
+    )
 
     return csm
 
@@ -150,7 +156,9 @@ def _load_refscan_coil_images(cpx_path: str):
     return coil_imgs
 
 
-def _compute_target_to_refscan_idx_transform(sin_path_refscan: str, sin_path_target: str):
+def _compute_target_to_refscan_idx_transform(
+    sin_path_refscan: str, sin_path_target: str
+):
     """
     Build a 4x4 affine matrix from target array indices to refscan array indices.
 
