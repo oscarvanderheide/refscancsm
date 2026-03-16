@@ -4,7 +4,7 @@ import numpy as np
 from scipy.ndimage import map_coordinates
 from tqdm import tqdm
 
-from .utils import cp, gpu_available
+from .utils import cp, get_verbose, gpu_available
 
 
 def interpolate_refscan_to_target_geometry(
@@ -92,7 +92,9 @@ def interpolate_refscan_to_target_geometry(
 
     result = xp.zeros((ncoils, nz, ny, nx), dtype=xp.complex64)
 
-    for coil_idx in tqdm(range(ncoils), desc="  Interpolating coils"):
+    for coil_idx in tqdm(
+        range(ncoils), desc="  Interpolating coils", disable=not get_verbose()
+    ):
         result[coil_idx] = map_fn(
             refscan_data[coil_idx].real,
             coords_for_interp,

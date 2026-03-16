@@ -24,7 +24,16 @@ import numpy as np
 from scipy import linalg
 from tqdm import tqdm
 
-from .utils import cp, get_num_threads, gpu_available, ifft2c, ifft3c, timed, vprint
+from .utils import (
+    cp,
+    get_num_threads,
+    get_verbose,
+    gpu_available,
+    ifft2c,
+    ifft3c,
+    timed,
+    vprint,
+)
 
 DEFAULT_DTYPE = np.complex64
 
@@ -437,7 +446,11 @@ def _interpolate_covariance_and_extract_csm_cpu(
         csm = np.zeros((1, nc, nz, ny, nx), dtype=dtype)
         eigenvalues = np.zeros((1, nz, ny, nx))
 
-        for z in tqdm(range(nz), desc="  Computing eigenmaps (CPU, slice-by-slice)"):
+        for z in tqdm(
+            range(nz),
+            desc="  Computing eigenmaps (CPU, slice-by-slice)",
+            disable=not get_verbose(),
+        ):
             slc = (M_y @ cov_z[z].reshape(ny_s, -1)).reshape(ny, nx_s, cosize)
             slc = (
                 (M_x @ slc.transpose(1, 0, 2).reshape(nx_s, -1))
@@ -618,7 +631,11 @@ def _interpolate_covariance_and_extract_csm_gpu(
     csm = np.zeros((1, nc, nz, ny, nx), dtype=dtype)
     eigenvalues = np.zeros((1, nz, ny, nx), dtype=real_dtype)
 
-    for z in tqdm(range(nz), desc="  Computing eigenmaps (GPU, slice-by-slice)"):
+    for z in tqdm(
+        range(nz),
+        desc="  Computing eigenmaps (GPU, slice-by-slice)",
+        disable=not get_verbose(),
+    ):
         slc_gpu = cp.asarray(cov_z[z])
         slc_gpu = (M_y_gpu @ slc_gpu.reshape(ny_s, -1)).reshape(ny, nx_s, cosize)
         slc_gpu = (

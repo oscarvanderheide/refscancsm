@@ -1,6 +1,9 @@
 """Shared utilities: GPU/CPU backend selection, thread count, timing, and FFT helpers."""
 
+import itertools
 import os
+import sys
+import threading
 import time
 from contextlib import contextmanager
 from functools import lru_cache
@@ -38,6 +41,55 @@ def timed(label):
     t0 = time.perf_counter()
     yield
     vprint(f"    ({time.perf_counter() - t0:.1f}s)")
+
+
+class Spinner:
+    """
+    Threaded terminal spinner for non-verbose mode.
+
+    Writes a rotating character to stdout using \\r so it works on any
+    terminal emulator, including basic Linux ones (no ANSI codes used).
+    Silently disabled when stdout is not a TTY (e.g. piped output).
+
+    Usage::
+
+        with Spinner("Computing CSM"):
+            heavy_computation()
+        # prints: "Computing CSM... done (12.3s)"
+    """
+
+    _FRAMES = r"|/-\\"
+
+    def __init__(self, message: str = "Working"):
+        self._message = message
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._spin, daemon=True)
+        self._active = sys.stdout.isatty()
+
+    def _spin(self):
+        prefix = f"  {self._message}... "
+        for char in itertools.cycle(self._FRAMES):
+            if self._stop.is_set():
+                break
+            sys.stdout.write(f"\r{prefix}{char}")
+            sys.stdout.flush()
+            time.sleep(0.1)
+        # Clear the spinner line so the final message can be printed cleanly
+        sys.stdout.write("\r" + " " * (len(prefix) + 1) + "\r")
+        sys.stdout.flush()
+
+    def __enter__(self):
+        self._t0 = time.perf_counter()
+        if self._active:
+            self._thread.start()
+        return self
+
+    def __exit__(self, *_):
+        elapsed = time.perf_counter() - self._t0
+        self._stop.set()
+        if self._active:
+            self._thread.join()
+            print(f"  {self._message}... done ({elapsed:.1f}s)")
 
 
 # ---------------------------------------------------------------------------

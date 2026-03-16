@@ -12,7 +12,7 @@ from .parse_sin import (
     get_matrix_size,
     get_mps_to_xyz_transform,
 )
-from .utils import fft3c, set_force_cpu, set_verbose, timed, vprint
+from .utils import fft3c, set_force_cpu, set_verbose, timed, vprint, Spinner
 
 
 def get_csm(
@@ -77,21 +77,28 @@ def get_csm(
     )
     matrix_size_target = get_matrix_size(sin_path_target, "target")
 
-    with timed("Interpolating refscan to target geometry"):
-        interpolated_coil_imgs = interpolate_refscan_to_target_geometry(
-            refscan_coil_imgs,
-            target_idx_to_refscan_idx,
-            matrix_size_target,
-            interpolation_order,
+    spinner = Spinner("Computing coil sensitivity maps") if not verbose else None
+    if spinner:
+        spinner.__enter__()
+    try:
+        with timed("Interpolating refscan to target geometry"):
+            interpolated_coil_imgs = interpolate_refscan_to_target_geometry(
+                refscan_coil_imgs,
+                target_idx_to_refscan_idx,
+                matrix_size_target,
+                interpolation_order,
+            )
+
+        with timed("Converting coil images to k-space (3D FFT)"):
+            kspace = fft3c(interpolated_coil_imgs)
+
+        # ESPIRiT can now accept GPU arrays and will handle transfers internally
+        csm = espirit(
+            kspace, calib_size=calib_size, kernel_size=kernel_size, threshold=threshold
         )
-
-    with timed("Converting coil images to k-space (3D FFT)"):
-        kspace = fft3c(interpolated_coil_imgs)
-
-    # ESPIRiT can now accept GPU arrays and will handle transfers internally
-    csm = espirit(
-        kspace, calib_size=calib_size, kernel_size=kernel_size, threshold=threshold
-    )
+    finally:
+        if spinner:
+            spinner.__exit__(None, None, None)
 
     # Always return NumPy arrays
     if hasattr(csm, "get"):

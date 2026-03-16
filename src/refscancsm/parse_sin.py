@@ -4,8 +4,6 @@ import re
 
 import numpy as np
 
-from .utils import vprint
-
 
 def get_mps_to_xyz_transform(sin_file_path: str, scan_type: str) -> np.ndarray:
     """
@@ -132,9 +130,6 @@ def get_voxel_sizes(sin_file_path: str, scan_type: str = "target") -> np.ndarray
     # For target, multiply by ratio of recon_resolutions to scan_resolutions
     recon_resolutions = get_matrix_size(sin_file_path, "refscan")
     scan_resolutions = get_matrix_size(sin_file_path, "target")
-    vprint(
-        f"Recon resolutions: {recon_resolutions}, Scan resolutions: {scan_resolutions}"
-    )
     resolution_ratio = recon_resolutions / scan_resolutions
 
     return voxel_sizes * resolution_ratio
@@ -173,10 +168,6 @@ def get_matrix_size(sin_file_path: str, scan_type: str) -> np.ndarray:
                 values = re.findall(r"[-+]?\d+\.?\d*", line.split(":")[-1])
                 if len(values) >= 3:
                     # Return first 3 values (ignore the 4th value which is always 1)
-                    vprint(
-                        f"Found {search_key} in {sin_file_path.split('/')[-1]}: {line.strip()}"
-                    )
-                    vprint(f"Found matrix size values: {values[:3]}")
                     return np.array([float(v) for v in values[:3]])
 
     raise ValueError(f"Could not find {search_key} in file {sin_file_path}")
@@ -237,7 +228,7 @@ def _get_mps_to_xyz_translation_part(sin_file_path: str) -> np.ndarray:
     """
     translation = None
     # Pattern to match location data in .sin file
-    pattern = f" 01 00 01: location_center_coordinates"
+    pattern = " 01 00 01: location_center_coordinates"
 
     with open(sin_file_path, "r") as f:
         for line in f:
