@@ -2,8 +2,9 @@
 
 import argparse
 import sys
+
 import numpy as np
-from pathlib import Path
+
 from .get_csm import get_csm
 
 
@@ -136,7 +137,7 @@ Examples:
             print(f"\nCoil maps saved to: {output_file}")
         else:
             print(
-                f"\nError: Unsupported output format. Use .npy or .mat extension.",
+                "\nError: Unsupported output format. Use .npy or .mat extension.",
                 file=sys.stderr,
             )
             sys.exit(1)
