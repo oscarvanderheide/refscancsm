@@ -2,7 +2,10 @@
 
 Compute MRI coil sensitivity maps from Philips SENSE reference scans and interpolate them onto arbitrary target scan geometries using ESPIRiT.
 
-**Required files**: `.cpx` (SENSE refscan images), `.sin` (SENSE refscan geometry), `.sin` (target scan geometry). Export with Gyrotools' gtPacknGo.
+**Required files** (export with Gyrotools' gtPacknGo): 
+- `refscan.cpx` (SENSE refscan images)
+- `refscan.sin` (contains SENSE refscan geometry information)
+- `target.sin` (contains target scan geometry information)
 
 The ESPIRiT implementation is a GPU-compatible Python translation from the [BART Toolbox](https://codeberg.org/mrirecon/bart) (Uecker et al., MRM 2014).
 
