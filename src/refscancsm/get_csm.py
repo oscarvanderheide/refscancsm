@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .espirit import espirit
+from espirit import espirit
 from .interp import interpolate_refscan_to_target_geometry
 from .parse_cpx import read_cpx
 from .parse_sin import (
@@ -92,7 +92,8 @@ def get_csm(
         with timed("Converting coil images to k-space (3D FFT)"):
             kspace = fft3c(interpolated_coil_imgs)
 
-        # ESPIRiT can now accept GPU arrays and will handle transfers internally
+        kspace = _prepare_kspace_for_espirit_input(kspace)
+
         csm = espirit(
             kspace, calib_size=calib_size, kernel_size=kernel_size, threshold=threshold
         )
@@ -101,7 +102,9 @@ def get_csm(
             spinner.__exit__(None, None, None)
 
     # Always return NumPy arrays
-    if hasattr(csm, "get"):
+    if hasattr(csm, "detach") and hasattr(csm, "cpu"):
+        csm = csm.detach().cpu().numpy()
+    elif hasattr(csm, "get"):
         csm = csm.get()
 
     return csm
@@ -150,6 +153,25 @@ def _find_refscan_files(target_sin_path: str):
     vprint(f"  Refscan CPX: {cpx_candidates[0]}")
     vprint(f"  Refscan SIN: {sin_candidates[0]}")
     return str(cpx_candidates[0]), str(sin_candidates[0])
+
+
+def _prepare_kspace_for_espirit_input(kspace):
+    """
+    Convert CuPy k-space arrays into a form accepted by the external ESPIRiT package.
+
+    The PyPI package accepts NumPy arrays or PyTorch tensors, but not CuPy arrays.
+    Keep GPU-resident data on device by bridging CuPy -> Torch via DLPack when
+    possible; otherwise fall back to a CPU NumPy array.
+    """
+    if not hasattr(kspace, "get"):
+        return kspace
+
+    try:
+        import torch
+
+        return torch.from_dlpack(kspace)
+    except Exception:
+        return kspace.get()
 
 
 def _load_refscan_coil_images(cpx_path: str):
