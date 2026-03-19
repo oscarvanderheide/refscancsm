@@ -25,8 +25,6 @@ get_csm target.sin --device cuda
 get_csm target.sin --device mps
 get_csm target.sin --device cpu
 
-# Cubic interpolation (falls back to scipy on CPU with a warning)
-get_csm target.sin --interp-order 3
 
 # Verbose timing output
 get_csm target.sin -v
@@ -104,7 +102,6 @@ get_csm target.sin [OPTIONS]
 | `--refscan-cpx PATH` | Path to refscan .cpx file (auto-detected by default) |
 | `--refscan-sin PATH` | Path to refscan .sin file (auto-detected by default) |
 | `-o, --output PATH` | Output file (.npy or .mat, default: csm.npy) |
-| `--interp-order N` | Interpolation: 0=nearest, 1=linear, 3=cubic (default: 1) |
 | `--calib-size N` | ESPIRiT calibration region size (default: 24) |
 | `--kernel-size N` | ESPIRiT kernel size (default: 6) |
 | `--threshold F` | Singular value threshold (default: 0.001) |
@@ -119,7 +116,7 @@ csm = get_csm(
     sin_path_target='target.sin',
     refscan_cpx_path=None,        # Auto-detected if None
     sin_path_refscan=None,        # Auto-detected if None
-    interpolation_order=1,        # 0=nearest, 1=linear, 3=cubic (CPU fallback)
+    # interpolation_order removed; always uses trilinear (order=1)
     calib_size=24,                # ESPIRiT calibration region
     kernel_size=6,                # ESPIRiT kernel size
     threshold=0.001,              # Singular value threshold
@@ -146,13 +143,9 @@ ESPIRiT calibration             (external espirit package, all devices)
 Return ndarray
 ```
 
-### Interpolation Orders
+### Interpolation
 
-| Order | Method | Devices | Notes |
-|-------|--------|---------|-------|
-| 0 | Nearest neighbour | CUDA, MPS, CPU | `grid_sample(mode='nearest')` |
-| 1 | Trilinear | CUDA, MPS, CPU | `grid_sample(mode='bilinear')` — default |
-| 3 | Cubic | CPU only | scipy fallback + UserWarning |
+Only trilinear interpolation (order=1) is supported. This uses `torch.nn.functional.grid_sample` with `mode='bilinear'` on all devices (CUDA, MPS, CPU).
 
 ## Troubleshooting
 

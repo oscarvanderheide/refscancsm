@@ -53,14 +53,6 @@ Examples:
     )
 
     parser.add_argument(
-        "--interp-order",
-        type=int,
-        default=1,
-        choices=[0, 1, 3],
-        help="Interpolation order: 0=nearest, 1=linear (default), 3=cubic",
-    )
-
-    parser.add_argument(
         "--calib-size",
         type=int,
         default=24,
@@ -108,7 +100,7 @@ Examples:
             args.target_sin,
             refscan_cpx_path=args.refscan_cpx,
             sin_path_refscan=args.refscan_sin,
-            interpolation_order=args.interp_order,
+            # interpolation_order removed; use default in get_csm
             calib_size=args.calib_size,
             kernel_size=args.kernel_size,
             threshold=args.threshold,

@@ -20,7 +20,6 @@ def get_csm(
     sin_path_target: str,
     refscan_cpx_path: str | None = None,
     sin_path_refscan: str | None = None,
-    interpolation_order: int = 1,
     calib_size: int = 24,
     kernel_size: int = 6,
     threshold: float = 0.001,
@@ -47,10 +46,6 @@ def get_csm(
         Path to the refscan .cpx file. Auto-detected when None.
     sin_path_refscan : str, optional
         Path to the refscan .sin file. Auto-detected when None.
-    interpolation_order : int
-        Spline order for spatial interpolation: 0=nearest, 1=linear (default), 3=cubic.
-        Order 1 is recommended to avoid overshoot at mask boundaries.  Order 3
-        uses a CPU fallback (scipy) with a warning.
     calib_size : int
         Size of the k-space calibration region for ESPIRiT (default: 24).
     kernel_size : int
@@ -100,11 +95,11 @@ def get_csm(
             refscan_coil_imgs,
             target_idx_to_refscan_idx,
             matrix_size_target,
-            interpolation_order,
             calib_size,
             kernel_size,
             threshold,
             device,
+            interpolation_order=1,
         )
     except (RuntimeError, Exception) as exc:
         # Catch CUDA / MPS out-of-memory errors and retry on CPU
@@ -124,11 +119,11 @@ def get_csm(
                 refscan_coil_imgs,
                 target_idx_to_refscan_idx,
                 matrix_size_target,
-                interpolation_order,
                 calib_size,
                 kernel_size,
                 threshold,
                 device,
+                interpolation_order=1,
             )
         else:
             raise
@@ -146,11 +141,11 @@ def _run_pipeline(
     refscan_coil_imgs,
     target_idx_to_refscan_idx,
     matrix_size_target,
-    interpolation_order,
     calib_size,
     kernel_size,
     threshold,
     device,
+    interpolation_order=1,
 ):
     """Run the interpolation → FFT → ESPIRiT pipeline on the given device."""
     with timed("Interpolating refscan to target geometry"):

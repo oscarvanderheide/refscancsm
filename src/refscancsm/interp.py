@@ -75,9 +75,9 @@ def interpolate_refscan_to_target_geometry(
     target_coords = torch.stack(
         [X, Y, Z, torch.ones_like(X)], dim=-1
     )  # (nz, ny, nx, 4)
-    refscan_coords = (
-        (transform @ target_coords.reshape(-1, 4).T).T[:, :3]
-    ).reshape(nz, ny, nx, 3)
+    refscan_coords = (target_coords.reshape(-1, 4) @ transform.T)[..., :3].reshape(
+        nz, ny, nx, 3
+    )
     # refscan_coords[..., 0] = X_ref (freq/W), [..., 1] = Y_ref (phase/H), [..., 2] = Z_ref (slice/D)
 
     if interpolation_order in (0, 1):
@@ -87,25 +87,24 @@ def interpolate_refscan_to_target_geometry(
             (nz_ref, ny_ref, nx_ref),
             interpolation_order,
         )
-    elif interpolation_order == 3:
+    if interpolation_order == 3:
         warnings.warn(
-            "Cubic interpolation (order=3) is not natively supported on GPU/MPS "
-            "with the PyTorch backend.  Falling back to scipy.ndimage on CPU — "
-            "result is moved to the requested device afterwards.",
+            "Cubic interpolation (order=3) runs on CPU via scipy.ndimage.map_coordinates.",
             UserWarning,
             stacklevel=2,
         )
+        refscan_coords_np = refscan_coords.detach().cpu().numpy()
         return _scipy_cubic_interp(
             refscan_imgs,
-            refscan_coords.cpu().numpy(),
+            refscan_coords_np,
             (ncoils, nz, ny, nx),
             device,
         )
-    else:
-        raise ValueError(
-            f"Unsupported interpolation_order {interpolation_order}. "
-            "Use 0 (nearest), 1 (linear), or 3 (cubic)."
-        )
+
+    raise ValueError(
+        f"Unsupported interpolation_order {interpolation_order}. "
+        "Use 0 (nearest), 1 (linear), or 3 (cubic)."
+    )
 
 
 # ---------------------------------------------------------------------------
