@@ -1,6 +1,7 @@
 """RefScanCSM — coil sensitivity maps from Philips SENSE refscan data."""
 
 from espirit import espirit
+
 from .get_csm import get_csm
 from .parse_cpx import read_cpx
 from .parse_sin import (
@@ -21,7 +22,7 @@ from .utils import (
     vprint,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "read_cpx",
