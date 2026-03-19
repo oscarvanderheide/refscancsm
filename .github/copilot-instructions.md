@@ -6,7 +6,7 @@ Python package for computing MRI coil sensitivity maps from Philips SENSE refere
 
 **Purpose**: Transform Philips coil survey data (from `.cpx`/`.sin` files) into coil sensitivity maps aligned to target scan geometry, enabling parallel imaging reconstruction across different scan orientations/resolutions.
 
-**Key Technology**: GPU-accelerated (CuPy) with CPU fallback, transparent array backend dispatch.
+**Key Technology**: GPU-accelerated via **PyTorch** — single code path for CUDA, MPS (Apple Silicon), and CPU.  No CuPy dependency.  ESPIRiT is provided by the external [`espirit`](https://pypi.org/project/espirit/) PyPI package.
 
 ## Architecture
 
@@ -18,330 +18,155 @@ src/refscancsm/
 ├── get_csm.py          # Main workflow orchestration
 ├── parse_cpx.py        # Read Philips CPX binary files
 ├── parse_sin.py        # Extract geometry/transforms from SIN files
-├── interp.py           # Spatial interpolation (GPU/CPU)
-├── espirit.py          # ESPIRiT algorithm implementation
+├── interp.py           # Spatial interpolation (torch.nn.functional.grid_sample)
 ├── walsh.py            # Alternative Walsh method (unused)
-└── utils.py            # Backend selection, FFT, GPU detection
+└── utils.py            # Device selection, FFT helpers (torch.fft)
 ```
 
 ### Data Pipeline
 
 ```
-Read .cpx → Flip/Rotate → Interpolate → 3D FFT → ESPIRiT → CSM
-  (CPU)       (CPU)      (GPU*/CPU)   (GPU*/CPU)  (Mixed)   (NumPy)
-                                                    ↑
-                                    GPU→CPU transfer point
+Read .cpx (numpy)
+    ↓  torch.from_numpy()  +  .to(device)
+Interpolate → target geometry   [torch.nn.functional.grid_sample, all devices]
+    ↓
+3D centered FFT                 [torch.fft, all devices]
+    ↓
+ESPIRiT (external package)      [all devices, passed via device= param]
+    ↓  tensor.cpu().numpy()
+Return numpy ndarray
 ```
-
-**Critical GPU→CPU Transfer**: Occurs in `get_csm.py` after FFT before ESPIRiT.
 
 ### Module Dependencies
 
 - `cli.py` → `get_csm.py`
-  - → `parse_cpx.py` (read_cpx)
-  - → `parse_sin.py` (geometry transforms)
-  - → `interp.py` (spatial resampling)
-  - → `utils.py` (FFT, GPU detection)
-  - → `espirit.py` (coil sensitivity calibration)
+  - → `parse_cpx.py` (read_cpx, returns numpy)
+  - → `parse_sin.py` (geometry transforms, returns numpy)
+  - → `interp.py` (spatial resampling, returns torch.Tensor)
+  - → `utils.py` (fft3c, get_device)
+  - → external `espirit` package (coil sensitivity calibration)
 
 ## Development Setup
 
 ### Installation
 
 ```bash
-# Development mode
 git clone https://github.com/oscarvanderheide/refscancsm.git
 cd refscancsm
 uv pip install -e .
 
-# With dev dependencies (arrayview, jupyter)
+# For CUDA (replace cu128 with your CUDA version)
+uv pip install torch --index-url https://download.pytorch.org/whl/cu128
+
+# With dev dependencies
 uv pip install -e . --group dev
 ```
 
 ### Dependencies
 
-- **cupy-cuda11x** ≥13.6.0 — GPU acceleration (optional)
-- **numpy** ≥2.4.1 — Array operations
-- **scipy** ≥1.11.0 — Interpolation, linalg
-- **tqdm** ≥4.67.3 — Progress bars
+- **torch** ≥2.0.0 — All compute (CUDA/MPS/CPU)
+- **espirit** ≥0.1.0 — ESPIRiT calibration (PyPI, PyTorch-based)
+- **numpy** ≥2.4.1 — Array I/O, geometry transforms
+- **scipy** ≥1.11.0 — Order-3 interpolation fallback, savemat
+- **tqdm** ≥4.67.1 — Progress bars
 
 ### Testing
 
-**No formal test suite** — use manual testing:
-
 ```bash
 # Import test
-python -c "from refscancsm import get_csm; print('OK')"
+python -c "from refscancsm import get_csm, get_device; print(get_device())"
 
-# Functional test (requires real data)
-python test.py  # Jupyter-style script with #%% cells
+# Device comparison test (requires real data)
+python test_cpu_gpu_comparison.py target.sin
+
+# Functional test (Jupyter-style)
+python test.py
 ```
-
-**Debugging**: See `debug/` directory for step-by-step validation scripts and reference `.npy` outputs.
 
 ## Guidelines
 
-### GPU/CPU Backend Strategy
+### Device Strategy
 
-**Auto-detection pattern**:
+**`get_device()` auto-detects the best device** — CUDA > MPS > CPU:
+
 ```python
-from .utils import gpu_available, cp
+from .utils import get_device
 
-if gpu_available():
-    # Use CuPy arrays
-    xp = cp
-else:
-    # Use NumPy arrays
-    xp = np
+device = get_device()          # torch.device('cuda') | torch.device('mps') | torch.device('cpu')
+tensor = data.to(device)       # Move any tensor to best device
 ```
 
-**Array-agnostic operations**: All FFT/array functions use dispatch:
-```python
-def _xp(x):
-    """Return cp or np based on array type."""
-    return cp.get_array_module(x) if cp is not None else np
+**Pass `device` explicitly through every function** — do not rely on globals:
 
-def fft3c(x):
-    xp = _xp(x)
-    return xp.fft.fftshift(xp.fft.fftn(...), ...)
-```
-
-### Data Transfer Guidelines
-
-**Keep data on GPU as long as possible**:
-
-✅ **Good** — minimize transfers:
 ```python
 # In interp.py
-result = interpolate_on_gpu(...)
-return result  # Keep on GPU
+def interpolate_refscan_to_target_geometry(refscan_imgs, ..., device=None):
+    if device is None:
+        device = get_device()
+    refscan_data = torch.from_numpy(refscan_imgs).to(device)
+    ...
 
 # In get_csm.py
-interpolated = interpolate(...)  # GPU array
-kspace = fft3c(interpolated)     # Stays on GPU
-if hasattr(kspace, 'get'):
-    kspace = kspace.get()         # Transfer once
-csm = espirit(kspace)             # CPU
+interpolated = interpolate_refscan_to_target_geometry(..., device=device)
+kspace = fft3c(interpolated)           # stays on device
+csm = espirit(kspace, device=device)   # stays on same device
+return csm.cpu().numpy()               # single transfer at the end
 ```
 
-❌ **Bad** — premature transfer:
-```python
-# In interp.py
-result = interpolate_on_gpu(...)
-return cp.asnumpy(result)  # Transfers too early!
+### Interpolation
 
-# In get_csm.py
-interpolated = interpolate(...)  # Now NumPy
-kspace = fft3c(interpolated)     # Runs on CPU (slow!)
-```
-
-**Performance impact**: FFT on CPU is ~10-15x slower than GPU for typical data sizes.
-
-### Critical Transfer Point
-
-**Location**: `src/refscancsm/get_csm.py:74-82`
+**Orders 0 and 1** use `torch.nn.functional.grid_sample` (all devices, no Python loop):
 
 ```python
-with timed("Converting coil images to k-space (3D FFT)"):
-    kspace = fft3c(interpolated_coil_imgs)
-    # Convert back to CPU if on GPU (espirit expects NumPy)
-    if hasattr(kspace, 'get'):  # CuPy array has .get() method
-        kspace = kspace.get()
-
-csm = espirit(kspace, ...)  # Requires NumPy array
+# Input: (1, n_coils, nz_ref, ny_ref, nx_ref)
+# Grid:  (1, nz, ny, nx, 3) — last dim = (x_norm, y_norm, z_norm) in [-1, 1]
+# align_corners=True: pixel 0 → -1, pixel N-1 → +1
+out = F.grid_sample(real_vol, grid, mode='bilinear', align_corners=True, padding_mode='zeros')
 ```
 
-**Why**: ESPIRiT uses NumPy-only operations (scipy.linalg, ThreadPoolExecutor) except for one GPU-accelerated step internally.
+**Order 3** falls back to `scipy.ndimage.map_coordinates` on CPU with a `UserWarning`.
+Result is moved back to the requested device afterwards.
 
-### Complex Array Handling
+### FFT
 
-**Interpolation workaround** (`interp.py`):
+Always use `fft3c` / `ifft3c` / `ifft2c` from `utils.py` — these use `torch.fft` and
+work transparently on all devices:
+
 ```python
-# map_coordinates doesn't support complex dtype
-result[coil] = map_fn(data.real, coords, ...) + \
-               1j * map_fn(data.imag, coords, ...)
+from .utils import fft3c
+kspace = fft3c(image_tensor)   # Works on CUDA, MPS, CPU
 ```
 
-Always split real/imaginary when using scipy/cupyx interpolation.
+### Return Type
 
-### Coordinate System Conventions
+`get_csm` always returns a `numpy.ndarray` (shape `(n_coils, nz, ny, nx)`, dtype `complex64`).
+Convert to torch only when needed downstream:
 
-1. **Array shapes**: `(n_coils, nz, ny, nx)` — Philips convention (x=freq, y=phase, z=slice)
-2. **FFT axes**: `(-3, -2, -1)` = (z, y, x)
-3. **Interpolation coords**: Must be in `[Z, Y, X]` order (reverse of shape)
-4. **Transforms**: Chain `target_idx → MPS → xyz → MPS → refscan_idx`
-
-### Common Patterns
-
-#### Checking Array Device
 ```python
-# Method 1: Duck typing
-if hasattr(arr, 'get'):
-    cpu_arr = arr.get()
-
-# Method 2: Module check
-if type(arr).__module__ == 'cupy':
-    cpu_arr = arr.get()
-
-# Method 3: get_array_module
-xp = cp.get_array_module(arr) if cp else np
+csm_np = get_csm('target.sin')          # ndarray
+csm_t  = torch.from_numpy(csm_np)      # tensor if needed
 ```
 
-#### Moving Between Devices
+## Common Mistakes to Avoid
+
+❌ **Importing or using CuPy** — CuPy has been removed; all compute goes through PyTorch.
+
+❌ **Returning numpy from interp.py** — `interpolate_refscan_to_target_geometry` must return a `torch.Tensor` on the requested device so the downstream FFT stays on device.
+
+❌ **Calling `espirit()` without passing `device=`** — espirit auto-detects CUDA if available; if the user passed `force_cpu=True` or `device='cpu'`, you must propagate that:
 ```python
-# NumPy → CuPy
-gpu_arr = cp.asarray(np_arr)
-
-# CuPy → NumPy
-np_arr = gpu_arr.get()  # or cp.asnumpy(gpu_arr)
+csm = espirit(kspace, ..., device=device)
 ```
 
-#### Centered FFTs
-```python
-# Always use fft3c/ifft3c from utils.py
-kspace = fft3c(image)   # Applies fftshift for k-space center
-image = ifft3c(kspace)  # Applies ifftshift
-```
-
-## ESPIRiT Algorithm Details
-
-**Pipeline** (based on Uecker et al., MRM 2014):
-1. Extract calibration region (ACS) from k-space center
-2. Build Casorati matrix from overlapping patches
-3. Eigendecomposition of Gram matrix → signal-space kernels
-4. IFFT kernels to image domain (PSF-like basis)
-5. Compute per-voxel covariance matrices (H^H H)
-6. Sinc-interpolate covariance to full resolution
-7. Extract dominant eigenvector per voxel → sensitivity map
-8. Phase-align and normalize
-
-**GPU acceleration points**:
-- Gram matrix eigendecomposition (`espirit.py:229-232`)
-- 3D sinc interpolation + eigenmap extraction (`espirit.py:550-631`)
-
-**CPU fallback**: 2D ESPIRiT always uses CPU.
+❌ **Multiple CPU↔device transfers** — the only transfer should be the final `.cpu().numpy()` at the end of `get_csm`.
 
 ## File Formats
 
-**Input**:
-- `.cpx` — Philips complex coil images (binary, compressed)
-- `.sin` — Philips scan metadata (text, geometry/transforms)
-
-**Output**:
-- `.npy` — NumPy array format (default)
-- `.mat` — MATLAB v7.3 format (use `-o file.mat`)
-
-**Shape**: `(n_coils, nz, ny, nx)` — complex64
-
-## Performance Considerations
-
-**Bottlenecks** (typical runtime %):
-1. Interpolation: 60-70% (GPU speedup: 5-10x)
-2. ESPIRiT: 20-30% (mixed GPU/CPU)
-3. FFT: 5-10% (GPU speedup: 10-15x)
-4. I/O: <5%
-
-**Memory**:
-- Typical: 2-4 GB GPU (32 coils, 256³ volume)
-- Watch for OOM on 512³ targets
-
-**Thread control**:
-```python
-from refscancsm.utils import set_num_threads
-set_num_threads(8)  # Override auto-detection
-```
-
-## Usage Examples
-
-### Command Line
-```bash
-# Auto-detect refscan files
-get_csm target.sin
-
-# Explicit paths
-get_csm target.sin --refscan-cpx ref.cpx --refscan-sin ref.sin
-
-# Cubic interpolation
-get_csm target.sin --interp-order 3 -o csm.npy
-
-# Verbose timing
-get_csm target.sin -v
-```
-
-### Python API
-```python
-from refscancsm import get_csm
-import numpy as np
-
-# Basic usage
-csm = get_csm('target.sin')
-
-# Full control
-csm = get_csm(
-    sin_path_target='target.sin',
-    refscan_cpx_path='ref.cpx',
-    sin_path_refscan='ref.sin',
-    interpolation_order=1,     # 0=nearest, 1=linear, 3=cubic
-    calib_size=24,             # ESPIRiT calibration region
-    kernel_size=6,             # ESPIRiT kernel size
-    threshold=0.001            # Singular value threshold
-)
-
-# Shape: (n_coils, nz, ny, nx), dtype: complex64
-np.save('csm.npy', csm)
-```
-
-## Anti-Patterns to Avoid
-
-❌ **Converting to NumPy too early**
-```python
-# In interpolation
-return cp.asnumpy(result)  # Bad! Loses GPU benefit for FFT
-```
-
-❌ **Manual FFT instead of centered FFT**
-```python
-kspace = np.fft.fftn(img)  # Bad! K-space center at corners
-```
-
-❌ **Ignoring device context**
-```python
-result = cp.zeros(...)
-np_result = result + 1  # Bad! Implicit conversion error
-```
-
-❌ **Threading GPU operations**
-```python
-with ThreadPoolExecutor() as exec:
-    exec.map(gpu_func, cupy_arrays)  # Bad! GPU context not thread-safe
-```
-
-## Related Projects
-
-- **BART** (`bart/`) — Reference implementation in C
-- **Julia** (`julia/`) — Alternative implementation for validation
-- **arrayview** — Interactive 4D array visualization (dev dependency)
-
-## Troubleshooting
-
-**GPU not detected**:
-- Check: `python -c "import cupy; print(cupy.cuda.runtime.getDeviceCount())"`
-- Verify: CUDA toolkit matches CuPy version (cuda11x/cuda12x)
-
-**OOM errors**:
-- Reduce batch size or use CPU fallback
-- Check `nvidia-smi` for memory leaks
-
-**Slow FFT performance**:
-- Verify data is on GPU: `type(arr).__module__ == 'cupy'`
-- Check transfer point in `get_csm.py:74-82`
-
-**Import errors**:
-- Reinstall: `uv pip install -e .`
-- Check Python ≥3.12
+**Input**: `.cpx` (Philips binary), `.sin` (Philips text metadata)
+**Output**: `.npy` (default), `.mat` (MATLAB via CLI `-o file.mat`)
+**Shape**: `(n_coils, nz, ny, nx)`, `complex64`
 
 ## Version Control
 
-**Ignored files**: `.cpx`, `.sin`, `.npy`, `.mat`, `debug/`, `bart/` (external)
-
-**Key branches**: Development on `main` branch
+**Ignored files**: `.cpx`, `.sin`, `.npy`, `.mat`, `debug/`, `bart/`
+**Key branches**: `main`

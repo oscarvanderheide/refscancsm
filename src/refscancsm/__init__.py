@@ -1,6 +1,6 @@
 """RefScanCSM — coil sensitivity maps from Philips SENSE refscan data."""
 
-from .espirit import espirit
+from espirit import espirit
 from .get_csm import get_csm
 from .parse_cpx import read_cpx
 from .parse_sin import (
@@ -11,6 +11,7 @@ from .parse_sin import (
 )
 from .utils import (
     fft3c,
+    get_device,
     get_num_threads,
     get_verbose,
     gpu_available,
@@ -31,6 +32,7 @@ __all__ = [
     "get_csm",
     "espirit",
     "fft3c",
+    "get_device",
     "gpu_available",
     "get_num_threads",
     "set_num_threads",

@@ -1,4 +1,4 @@
-"""Shared utilities: GPU/CPU backend selection, thread count, timing, and FFT helpers."""
+"""Shared utilities: device selection, thread count, timing, and FFT helpers."""
 
 import itertools
 import os
@@ -6,9 +6,9 @@ import sys
 import threading
 import time
 from contextlib import contextmanager
-from functools import lru_cache
 
 import numpy as np
+import torch
 
 # ---------------------------------------------------------------------------
 # Verbose output control
@@ -93,23 +93,18 @@ class Spinner:
 
 
 # ---------------------------------------------------------------------------
-# GPU backend (CuPy)
+# Device selection (PyTorch)
 # ---------------------------------------------------------------------------
-
-try:
-    import cupy as cp
-except Exception:
-    cp = None
 
 _FORCE_CPU = False  # Global flag to force CPU usage
 
 
 def set_force_cpu(force: bool) -> None:
-    """Set whether to force CPU usage even when GPU is available."""
+    """Force CPU usage even when a GPU or MPS device is available."""
     global _FORCE_CPU
     _FORCE_CPU = force
     if force:
-        vprint("  Forcing CPU usage (GPU disabled)")
+        vprint("  Forcing CPU usage")
 
 
 def get_force_cpu() -> bool:
@@ -117,29 +112,22 @@ def get_force_cpu() -> bool:
     return _FORCE_CPU
 
 
-@lru_cache(maxsize=1)
-def _gpu_available_internal() -> bool:
-    """Internal check for GPU availability (cached)."""
-    if cp is None:
-        return False
-    try:
-        if cp.cuda.runtime.getDeviceCount() < 1:
-            return False
-        # Verify that device context creation and a small allocation actually work.
-        _ = cp.zeros(1, dtype=cp.float32)
-        cp.cuda.runtime.deviceSynchronize()
-        device_name = cp.cuda.runtime.getDeviceProperties(0)["name"].decode()
-        vprint(f"  GPU detected: {device_name}")
-        return True
-    except Exception:
-        return False
+def get_device() -> torch.device:
+    """Return the best available torch device (CUDA > MPS > CPU)."""
+    if _FORCE_CPU:
+        return torch.device("cpu")
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
 
 
 def gpu_available() -> bool:
-    """Return True when CuPy is installed and can access at least one CUDA device, and CPU is not forced."""
+    """Return True when a non-CPU torch device is available and CPU is not forced."""
     if _FORCE_CPU:
         return False
-    return _gpu_available_internal()
+    return torch.cuda.is_available() or torch.backends.mps.is_available()
 
 
 # ---------------------------------------------------------------------------
@@ -169,39 +157,32 @@ def set_num_threads(num_threads: int) -> None:
 
 
 # ---------------------------------------------------------------------------
-# FFT helpers
+# FFT helpers (PyTorch — device-agnostic: CUDA, MPS, CPU)
 # ---------------------------------------------------------------------------
-# All helpers dispatch to CuPy or NumPy based on the input array type, so
-# they work transparently for both CPU and GPU arrays.
 
 
-def _xp(x):
-    """Return the array module (numpy or cupy) for the given array."""
-    return cp.get_array_module(x) if cp is not None else np
-
-
-def ifft2c(x):
-    """Centered 2D IFFT. Works with NumPy and CuPy arrays."""
-    axes = (-2, -1)
-    xp = _xp(x)
-    return xp.fft.fftshift(
-        xp.fft.ifftn(xp.fft.ifftshift(x, axes=axes), axes=axes), axes=axes
+def fft3c(x: torch.Tensor) -> torch.Tensor:
+    """Centered 3D FFT. Works on CUDA, MPS, and CPU tensors."""
+    dims = (-3, -2, -1)
+    return torch.fft.fftshift(
+        torch.fft.fftn(torch.fft.ifftshift(x, dim=dims), dim=dims),
+        dim=dims,
     )
 
 
-def ifft3c(x):
-    """Centered 3D IFFT. Works with NumPy and CuPy arrays."""
-    axes = (-3, -2, -1)
-    xp = _xp(x)
-    return xp.fft.fftshift(
-        xp.fft.ifftn(xp.fft.ifftshift(x, axes=axes), axes=axes), axes=axes
+def ifft3c(x: torch.Tensor) -> torch.Tensor:
+    """Centered 3D IFFT. Works on CUDA, MPS, and CPU tensors."""
+    dims = (-3, -2, -1)
+    return torch.fft.fftshift(
+        torch.fft.ifftn(torch.fft.ifftshift(x, dim=dims), dim=dims),
+        dim=dims,
     )
 
 
-def fft3c(x):
-    """Centered 3D FFT. Works with NumPy and CuPy arrays."""
-    axes = (-3, -2, -1)
-    xp = _xp(x)
-    return xp.fft.fftshift(
-        xp.fft.fftn(xp.fft.ifftshift(x, axes=axes), axes=axes), axes=axes
+def ifft2c(x: torch.Tensor) -> torch.Tensor:
+    """Centered 2D IFFT. Works on CUDA, MPS, and CPU tensors."""
+    dims = (-2, -1)
+    return torch.fft.fftshift(
+        torch.fft.ifftn(torch.fft.ifftshift(x, dim=dims), dim=dims),
+        dim=dims,
     )

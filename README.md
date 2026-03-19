@@ -2,90 +2,94 @@
 
 Compute MRI coil sensitivity maps from Philips SENSE reference scans and interpolate them onto arbitrary target scan geometries using ESPIRiT.
 
-**Required files** (export with Gyrotools' gtPacknGo): 
+**Required files** (export with Gyrotools' gtPacknGo):
 - `refscan.cpx` (SENSE refscan images)
 - `refscan.sin` (contains SENSE refscan geometry information)
 - `target.sin` (contains target scan geometry information)
 
-The ESPIRiT implementation is a GPU-compatible Python translation from the [BART Toolbox](https://codeberg.org/mrirecon/bart) (Uecker et al., MRM 2014).
-
-**Note**: Not intended for PyPI distribution. Install directly from GitHub.
+Powered by [PyTorch](https://pytorch.org): runs on **CPU**, **CUDA (NVIDIA GPU)**, and **MPS (Apple Silicon)** with a single code path — no backend switching required.  The ESPIRiT calibration step uses the [`espirit`](https://pypi.org/project/espirit/) PyPI package.
 
 ## Usage
 
 ### Command Line
 
-CPU-only (works on all platforms):
+```bash
+# Auto-detect refscan files in same directory as target
+get_csm target.sin
+
+# Explicit refscan paths
+get_csm target.sin --refscan-cpx ref.cpx --refscan-sin ref.sin
+
+# Choose device explicitly
+get_csm target.sin --device cuda
+get_csm target.sin --device mps
+get_csm target.sin --device cpu
+
+# Cubic interpolation (falls back to scipy on CPU with a warning)
+get_csm target.sin --interp-order 3
+
+# Verbose timing output
+get_csm target.sin -v
+```
+
+Run with `uvx` without installing:
 ```bash
 uvx --from git+https://github.com/oscarvanderheide/refscancsm.git get_csm target.sin
-```
-
-With GPU acceleration (see [Installation](#installation) to determine your CUDA version):
-```bash
-# CUDA 11.x
-uvx --with cupy-cuda11x --from git+https://github.com/oscarvanderheide/refscancsm.git get_csm target.sin
-
-# CUDA 12.x
-uvx --with cupy-cuda12x --from git+https://github.com/oscarvanderheide/refscancsm.git get_csm target.sin
-```
-
-Create an alias for convenience:
-```bash
-# CPU-only
-alias get_csm='uvx --from git+https://github.com/oscarvanderheide/refscancsm.git get_csm'
-
-# With GPU (CUDA 11.x)
-alias get_csm='uvx --with cupy-cuda11x --from git+https://github.com/oscarvanderheide/refscancsm.git get_csm'
-
-# Then use anywhere
-get_csm /path/to/target.sin
 ```
 
 ### Python API
 
 ```python
 from refscancsm import get_csm
+import numpy as np
 
-# Auto-detects refscan files in same directory as target
+# Basic usage — device auto-detected (CUDA > MPS > CPU)
 csm = get_csm('target.sin')  # shape: (n_coils, nz, ny, nx), dtype: complex64
+
+# Explicit device
+csm = get_csm('target.sin', device='cuda')
+csm = get_csm('target.sin', device='mps')   # Apple Silicon
+csm = get_csm('target.sin', device='cpu')
+
+np.save('csm.npy', csm)
 ```
 
 ## Installation
 
-### Determining Your CUDA Version
+### CPU / MPS (Apple Silicon)
 
-**If you have a GPU and want acceleration**, first check your CUDA version:
+Standard PyPI install — PyTorch CPU/MPS wheel is pulled automatically:
 
-```bash
-nvidia-smi
-```
-
-Look for "CUDA Version" in the top-right corner (e.g., "CUDA Version: 11.8" or "CUDA Version: 12.1").
-
-- CUDA 11.x → use `--extra cuda11x` (or `--with cupy-cuda11x` for uvx)
-- CUDA 12.x → use `--extra cuda12x` (or `--with cupy-cuda12x` for uvx)
-- No CUDA or macOS → omit the extra (CPU-only mode)
-
-If `nvidia-smi` is not found, you either don't have a GPU, don't have CUDA installed, or you're on macOS. Use CPU-only mode.
-
-### Python API Installation
-
-For CUDA 11.x:
-```bash
-uv add git+https://github.com/oscarvanderheide/refscancsm.git --extra cuda11x
-```
-
-For CUDA 12.x:
-```bash
-uv add git+https://github.com/oscarvanderheide/refscancsm.git --extra cuda12x
-```
-
-CPU-only (macOS or no GPU):
 ```bash
 uv add git+https://github.com/oscarvanderheide/refscancsm.git
+# or
+pip install git+https://github.com/oscarvanderheide/refscancsm.git
 ```
 
-The tool automatically detects GPU availability and falls back to CPU if needed.
+### CUDA (NVIDIA GPU)
+
+Install the package first, then replace the CPU torch wheel with a CUDA-enabled one from [pytorch.org](https://pytorch.org/get-started/locally/):
+
+```bash
+uv add git+https://github.com/oscarvanderheide/refscancsm.git
+
+# CUDA 12.x (adjust cu128 to match your CUDA version)
+uv pip install torch --index-url https://download.pytorch.org/whl/cu128
+
+# Check available CUDA version
+nvidia-smi  # look for "CUDA Version" in the top-right corner
+```
+
+### Development
+
+```bash
+git clone https://github.com/oscarvanderheide/refscancsm.git
+cd refscancsm
+uv pip install -e .
+
+# With dev dependencies (arrayview, jupyter)
+uv pip install -e . --group dev
+```
 
 ## Options
 
@@ -95,15 +99,18 @@ The tool automatically detects GPU availability and falls back to CPU if needed.
 get_csm target.sin [OPTIONS]
 ```
 
-- `--refscan-cpx PATH` - Path to refscan .cpx file (auto-detected by default)
-- `--refscan-sin PATH` - Path to refscan .sin file (auto-detected by default)
-- `-o, --output PATH` - Output file (.npy or .mat, default: csm.npy)
-- `--interp-order N` - Interpolation: 0=nearest, 1=linear, 3=cubic (default: 1)
-- `--calib-size N` - ESPIRiT calibration region size (default: 24)
-- `--kernel-size N` - ESPIRiT kernel size (default: 6)
-- `--threshold F` - Singular value threshold (default: 0.001)
-- `--force-cpu` - Force CPU even when GPU available
-- `-v, --verbose` - Show detailed timing information
+| Option | Description |
+|--------|-------------|
+| `--refscan-cpx PATH` | Path to refscan .cpx file (auto-detected by default) |
+| `--refscan-sin PATH` | Path to refscan .sin file (auto-detected by default) |
+| `-o, --output PATH` | Output file (.npy or .mat, default: csm.npy) |
+| `--interp-order N` | Interpolation: 0=nearest, 1=linear, 3=cubic (default: 1) |
+| `--calib-size N` | ESPIRiT calibration region size (default: 24) |
+| `--kernel-size N` | ESPIRiT kernel size (default: 6) |
+| `--threshold F` | Singular value threshold (default: 0.001) |
+| `--device STR` | PyTorch device: cuda, mps, cpu (auto-detected by default) |
+| `--force-cpu` | Force CPU (equivalent to `--device cpu`) |
+| `-v, --verbose` | Show detailed timing information |
 
 ### Python API
 
@@ -112,11 +119,52 @@ csm = get_csm(
     sin_path_target='target.sin',
     refscan_cpx_path=None,        # Auto-detected if None
     sin_path_refscan=None,        # Auto-detected if None
-    interpolation_order=1,        # 0=nearest, 1=linear, 3=cubic
+    interpolation_order=1,        # 0=nearest, 1=linear, 3=cubic (CPU fallback)
     calib_size=24,                # ESPIRiT calibration region
     kernel_size=6,                # ESPIRiT kernel size
     threshold=0.001,              # Singular value threshold
-    force_cpu=False,              # Force CPU
+    device=None,                  # torch device: 'cuda', 'mps', 'cpu', or None
+    force_cpu=False,              # Shorthand for device='cpu'
     verbose=False,                # Show timing info
 )
+# Returns: numpy ndarray, shape (n_coils, nz, ny, nx), dtype complex64
 ```
+
+## Architecture
+
+### Data Pipeline
+
+```
+Read .cpx (numpy)
+    ↓  to_device()
+Interpolate → target geometry   (torch.nn.functional.grid_sample, all devices)
+    ↓
+3D centered FFT                 (torch.fft, all devices)
+    ↓
+ESPIRiT calibration             (external espirit package, all devices)
+    ↓  .cpu().numpy()
+Return ndarray
+```
+
+### Interpolation Orders
+
+| Order | Method | Devices | Notes |
+|-------|--------|---------|-------|
+| 0 | Nearest neighbour | CUDA, MPS, CPU | `grid_sample(mode='nearest')` |
+| 1 | Trilinear | CUDA, MPS, CPU | `grid_sample(mode='bilinear')` — default |
+| 3 | Cubic | CPU only | scipy fallback + UserWarning |
+
+## Troubleshooting
+
+**Device not detected:**
+```python
+import torch
+print(torch.cuda.is_available())          # CUDA
+print(torch.backends.mps.is_available())  # MPS (macOS)
+```
+
+**CUDA out of memory:** Pass `device='cpu'` or reduce `calib_size`.
+
+**Import errors:** Reinstall with `uv pip install -e .`
+
+**Cubic interpolation warning:** Order 3 always uses scipy on CPU. Use order 1 for GPU-accelerated interpolation.

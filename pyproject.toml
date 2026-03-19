@@ -24,12 +24,15 @@ dependencies = [
     "espirit>=0.1.0",
     "numpy>=2.4.1",
     "scipy>=1.11.0",
+    "torch>=2.0.0",
     "tqdm>=4.67.3",
 ]
 
-[project.optional-dependencies]
-cuda11x = ["cupy-cuda11x>=13.6.0"]
-cuda12x = ["cupy-cuda12x>=13.6.0"]
+# GPU acceleration is provided by PyTorch itself.  CPU and MPS (Apple Silicon)
+# work with the default torch wheel from PyPI.  For CUDA, install the matching
+# wheel from https://pytorch.org/get-started/locally/ AFTER installing this
+# package, e.g.:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
 
 [project.scripts]
 get_csm = "refscancsm.cli:main"
@@ -43,6 +46,7 @@ packages = ["src/refscancsm"]
 
 [dependency-groups]
 dev = [
+    "arrayview>=0.5.1",
     "h5py>=3.15.1",
     "ipykernel>=7.2.0",
     "jupyter>=1.1.1",

@@ -82,9 +82,16 @@ Examples:
     )
 
     parser.add_argument(
+        "--device",
+        type=str,
+        default=None,
+        help="PyTorch device to run on: 'cuda', 'mps', or 'cpu'. Auto-detected when omitted.",
+    )
+
+    parser.add_argument(
         "--force-cpu",
         action="store_true",
-        help="Force CPU usage even when GPU is available",
+        help="Force CPU usage even when a GPU is available (equivalent to --device cpu).",
     )
 
     parser.add_argument(
@@ -105,6 +112,7 @@ Examples:
             calib_size=args.calib_size,
             kernel_size=args.kernel_size,
             threshold=args.threshold,
+            device=args.device,
             force_cpu=args.force_cpu,
             verbose=args.verbose,
         )
