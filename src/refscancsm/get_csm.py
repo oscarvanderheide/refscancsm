@@ -4,8 +4,8 @@ from pathlib import Path
 
 import numpy as np
 import torch
-
 from espirit import espirit
+
 from .interp import interpolate_refscan_to_target_geometry
 from .parse_cpx import read_cpx
 from .parse_sin import (
@@ -13,7 +13,7 @@ from .parse_sin import (
     get_matrix_size,
     get_mps_to_xyz_transform,
 )
-from .utils import fft3c, get_device, set_force_cpu, set_verbose, timed, vprint, Spinner
+from .utils import Spinner, fft3c, get_device, set_force_cpu, set_verbose, timed, vprint
 
 
 def get_csm(
@@ -103,9 +103,16 @@ def get_csm(
         )
     except (RuntimeError, Exception) as exc:
         # Catch CUDA / MPS out-of-memory errors and retry on CPU
-        _oom_keywords = ("out of memory", "cudaErrorMemoryAllocation", "AcceleratorError")
-        if device.type != "cpu" and any(kw.lower() in str(exc).lower() for kw in _oom_keywords):
+        _oom_keywords = (
+            "out of memory",
+            "cudaErrorMemoryAllocation",
+            "AcceleratorError",
+        )
+        if device.type != "cpu" and any(
+            kw.lower() in str(exc).lower() for kw in _oom_keywords
+        ):
             import warnings
+
             warnings.warn(
                 f"GPU out of memory ({device}); retrying on CPU. "
                 "Pass device='cpu' to avoid this overhead next time.",

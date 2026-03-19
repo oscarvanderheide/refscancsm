@@ -56,9 +56,9 @@ def interpolate_refscan_to_target_geometry(
 
     # Move data to device
     refscan_data = torch.from_numpy(refscan_imgs.astype(np.complex64)).to(device)
-    transform = torch.from_numpy(
-        target_to_refscan_transform.astype(np.float32)
-    ).to(device)
+    transform = torch.from_numpy(target_to_refscan_transform.astype(np.float32)).to(
+        device
+    )
 
     # Build target-grid voxel coordinates and flip axes to match reconframe orientation
     Z, Y, X = torch.meshgrid(
@@ -205,4 +205,3 @@ def _scipy_cubic_interp(
         )
 
     return torch.from_numpy(result).to(device)
-
