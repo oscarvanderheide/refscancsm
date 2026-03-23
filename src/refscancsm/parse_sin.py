@@ -127,10 +127,17 @@ def get_voxel_sizes(sin_file_path: str, scan_type: str = "target") -> np.ndarray
     if scan_type == "refscan":
         return voxel_sizes
 
-    # For target, multiply by ratio of recon_resolutions to scan_resolutions
+    # For target, multiply by ratio of recon_resolutions to scan_resolutions.
+    # Only apply the ratio for the in-plane (x, y) dimensions; z is always 1.0
+    # because for 3D scans recon_z == scan_z, and for multi-2D scans voxel_sizes[2]
+    # from the file already encodes the correct inter-slice spacing.
     recon_resolutions = get_matrix_size(sin_file_path, "refscan")
     scan_resolutions = get_matrix_size(sin_file_path, "target")
-    resolution_ratio = recon_resolutions / scan_resolutions
+    resolution_ratio = np.array([
+        recon_resolutions[0] / scan_resolutions[0],
+        recon_resolutions[1] / scan_resolutions[1],
+        1.0,
+    ])
 
     return voxel_sizes * resolution_ratio
 
@@ -168,9 +175,29 @@ def get_matrix_size(sin_file_path: str, scan_type: str) -> np.ndarray:
                 values = re.findall(r"[-+]?\d+\.?\d*", line.split(":")[-1])
                 if len(values) >= 3:
                     # Return first 3 values (ignore the 4th value which is always 1)
-                    return np.array([float(v) for v in values[:3]])
+                    result = np.array([float(v) for v in values[:3]])
+                    # For multi-2D target scans, each slice is acquired as a separate
+                    # 2D k-space, so scan_resolutions has z=1.  The actual number of
+                    # slices in the reconstructed 3D volume equals nr_locations.
+                    if scan_type == "target" and result[2] == 1:
+                        nr_loc = _get_nr_locations(sin_file_path)
+                        if nr_loc > 1:
+                            result[2] = float(nr_loc)
+                    return result
 
     raise ValueError(f"Could not find {search_key} in file {sin_file_path}")
+
+
+def _get_nr_locations(sin_file_path: str) -> int:
+    """Parse the number of slice locations from a .sin file (returns 1 if not found)."""
+    pattern = re.compile(r"\bnr_locations\s+:")
+    with open(sin_file_path, "r") as f:
+        for line in f:
+            if pattern.search(line):
+                values = re.findall(r"\d+", line.split(":")[-1])
+                if values:
+                    return int(values[0])
+    return 1
 
 
 def _get_mps_to_xyz_linear_part(sin_file_path: str) -> np.ndarray:
@@ -216,6 +243,8 @@ def _get_mps_to_xyz_translation_part(sin_file_path: str) -> np.ndarray:
     Parse .sin file to extract the translation part of the affine transformation matrix that is used to map
     array indices to world coordinates.
 
+    If multiple locations (slices) are present, extracts the center slice's coordinates.
+
     Parameters
     ----------
     sin_file_path : str
@@ -226,20 +255,33 @@ def _get_mps_to_xyz_translation_part(sin_file_path: str) -> np.ndarray:
     translation : np.ndarray
         3D translation vector [x, y, z] in mm
     """
-    translation = None
+    translations = {}
     # Pattern to match location data in .sin file
-    pattern = " 01 00 01: location_center_coordinates"
+    # Format: XX XX YY: location_center_coordinates
+    # where YY is the location (slice) index.
+    pattern = re.compile(r" \d{2} \d{2} (\d{2}): location_center_coordinates")
 
     with open(sin_file_path, "r") as f:
         for line in f:
-            # Extract translation coordinates
-            if pattern in line:
+            match = pattern.search(line)
+            if match:
+                loc_idx = int(match.group(1))
                 values = re.findall(r"[-+]?\d*\.\d+", line.split(":")[-1])
                 if len(values) == 3:
-                    translation = np.array([float(v) for v in values])
+                    translations[loc_idx] = np.array([float(v) for v in values])
 
-    # Validate that we found all required data
-    if translation is None:
+    if not translations:
         raise ValueError(f"Could not find translation data in {sin_file_path}. ")
 
-    return translation
+    # If multiple slices are present, pick the middle one
+    sorted_indices = sorted(translations.keys())
+    n_slices = len(sorted_indices)
+    
+    if n_slices == 1:
+        return translations[sorted_indices[0]]
+    
+    # For multi-slice, pick center
+    # If even, this picks n/2 (e.g. for 40 slices, indices 1..40, it's index 20 or 21 depending on floor)
+    # Using floor of (n-1)/2 index in the sorted list.
+    center_idx = sorted_indices[(n_slices - 1) // 2]
+    return translations[center_idx]
