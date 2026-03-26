@@ -133,11 +133,13 @@ def get_voxel_sizes(sin_file_path: str, scan_type: str = "target") -> np.ndarray
     # from the file already encodes the correct inter-slice spacing.
     recon_resolutions = get_matrix_size(sin_file_path, "refscan")
     scan_resolutions = get_matrix_size(sin_file_path, "target")
-    resolution_ratio = np.array([
-        recon_resolutions[0] / scan_resolutions[0],
-        recon_resolutions[1] / scan_resolutions[1],
-        1.0,
-    ])
+    resolution_ratio = np.array(
+        [
+            recon_resolutions[0] / scan_resolutions[0],
+            recon_resolutions[1] / scan_resolutions[1],
+            1.0,
+        ]
+    )
 
     return voxel_sizes * resolution_ratio
 
@@ -276,10 +278,10 @@ def _get_mps_to_xyz_translation_part(sin_file_path: str) -> np.ndarray:
     # If multiple slices are present, pick the middle one
     sorted_indices = sorted(translations.keys())
     n_slices = len(sorted_indices)
-    
+
     if n_slices == 1:
         return translations[sorted_indices[0]]
-    
+
     # For multi-slice, pick center
     # If even, this picks n/2 (e.g. for 40 slices, indices 1..40, it's index 20 or 21 depending on floor)
     # Using floor of (n-1)/2 index in the sorted list.
