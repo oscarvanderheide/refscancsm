@@ -7,7 +7,7 @@ name = "refscancsm"
 version = "0.2.1"
 description = "ESPIRiT-based MRI coil sensitivity mapping from Philips SENSE refscan data"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 authors = [
     { name = "Your Name", email = "your.email@example.com" }
 ]
@@ -21,18 +21,18 @@ classifiers = [
 ]
 
 dependencies = [
-    "espirit>=0.1.0",
+    "espirit>=0.1.1",
     "numpy>=2.4.1",
     "scipy>=1.11.0",
-    "torch>=2.0.0",
+    "torch>=2.0.0,<2.5.0",
     "tqdm>=4.67.3",
 ]
 
-# GPU acceleration is provided by PyTorch itself.  CPU and MPS (Apple Silicon)
-# work with the default torch wheel from PyPI.  For CUDA, install the matching
-# wheel from https://pytorch.org/get-started/locally/ AFTER installing this
-# package, e.g.:
-#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+# PyTorch 2.4.x on PyPI ships CUDA 12.1 binaries (nvidia-*-cu12>=12.1.*).
+# CUDA 12.1 requires driver ≥525; this machine has driver 535 so it works.
+# PyTorch 2.5+ uses CUDA 12.4 (needs driver ≥550) and 2.6+ uses CUDA 13 —
+# both incompatible with driver 535.  Raise the upper bound once the driver
+# is updated.
 
 [project.scripts]
 get_csm = "refscancsm.cli:main"
