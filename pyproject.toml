@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "refscancsm"
-version = "0.2.1"
+version = "0.2.2"
 description = "ESPIRiT-based MRI coil sensitivity mapping from Philips SENSE refscan data"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
